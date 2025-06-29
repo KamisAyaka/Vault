@@ -27,13 +27,14 @@ contract NetworkConfig is Script {
     }
 
     function getMainnetEthConfig() public pure returns (Config memory) {
-        return Config({
-            aavePool: 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2,
-            uniswapRouter: 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D,
-            weth: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2,
-            usdc: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48,
-            link: 0x514910771AF9Ca656af840dff83E8264EcF986CA
-        });
+        return
+            Config({
+                aavePool: 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2,
+                uniswapRouter: 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D,
+                weth: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2,
+                usdc: 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48,
+                link: 0x514910771AF9Ca656af840dff83E8264EcF986CA
+            });
     }
 
     function getOrCreateAnvilEthConfig() public returns (Config memory) {
@@ -43,17 +44,18 @@ contract NetworkConfig is Script {
 
         AavePoolMock mAavePool = new AavePoolMock();
         UniswapFactoryMock mUniswapFactory = new UniswapFactoryMock();
-        UniswapRouterMock mUniswapRouter = new UniswapRouterMock(address(mUniswapFactory), address(weth));
+        UniswapRouterMock mUniswapRouter = new UniswapRouterMock(
+            address(mUniswapFactory),
+            address(weth)
+        );
 
-        return Config({
-            aavePool: address(mAavePool),
-            uniswapRouter: address(mUniswapRouter),
-            weth: address(weth),
-            usdc: address(usdc),
-            link: address(link)
-        });
+        return
+            Config({
+                aavePool: address(mAavePool),
+                uniswapRouter: address(mUniswapRouter),
+                weth: address(weth),
+                usdc: address(usdc),
+                link: address(link)
+            });
     }
-
-    // add this to be excluded from coverage report
-    function test() public {}
 }

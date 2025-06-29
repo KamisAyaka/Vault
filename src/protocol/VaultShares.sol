@@ -8,6 +8,11 @@ import {UniswapAdapter} from "./investableUniverseAdapters/UniswapAdapter.sol";
 import {DataTypes} from "../vendor/DataTypes.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
+/**
+ * @title VaultShares
+ * @dev 基于 ERC-4626 的投资金库合约，支持多协议资产配置
+ * @dev 继承自 ERC4626、IVaultShares、AaveAdapter、UniswapAdapter、ReentrancyGuard
+ */
 contract VaultShares is
     ERC4626,
     IVaultShares,
@@ -15,6 +20,7 @@ contract VaultShares is
     UniswapAdapter,
     ReentrancyGuard
 {
+    // 错误定义
     error VaultShares__DepositMoreThanMax(uint256 amount, uint256 max);
     error VaultShares__NotGuardian();
     error VaultShares__NotVaultGuardianContract();
@@ -22,7 +28,7 @@ contract VaultShares is
     error VaultShares__NotActive();
 
     /*//////////////////////////////////////////////////////////////
-                            STATE VARIABLES
+                            状态变量
     //////////////////////////////////////////////////////////////*/
     IERC20 internal immutable i_uniswapLiquidityToken;
     IERC20 internal immutable i_aaveAToken;
@@ -36,16 +42,17 @@ contract VaultShares is
     uint256 private constant ALLOCATION_PRECISION = 1_000;
 
     /*//////////////////////////////////////////////////////////////
-                                 EVENTS
+                                 事件
     //////////////////////////////////////////////////////////////*/
     event UpdatedAllocation(AllocationData allocationData);
     event NoLongerActive();
     event FundsInvested();
 
     /*//////////////////////////////////////////////////////////////
-                               MODIFIERS
+                               修饰符
     //////////////////////////////////////////////////////////////*/
 
+    /// @dev 仅守护者可调用
     modifier onlyGuardian() {
         if (msg.sender != i_guardian) {
             revert VaultShares__NotGuardian();
@@ -53,6 +60,7 @@ contract VaultShares is
         _;
     }
 
+    /// @dev 仅 VaultGuardians 合约可调用
     modifier onlyVaultGuardians() {
         if (msg.sender != i_vaultGuardians) {
             revert VaultShares__NotVaultGuardianContract();
@@ -60,6 +68,7 @@ contract VaultShares is
         _;
     }
 
+    /// @dev 仅当金库处于活跃状态时可调用
     modifier isActive() {
         if (!s_isActive) {
             revert VaultShares__NotActive();
@@ -69,14 +78,15 @@ contract VaultShares is
 
     // slither-disable-start reentrancy-eth
     /**
-     * @notice removes all supplied liquidity from Uniswap and supplied lending amount from Aave and then re-invests it back into them only if the vault is active
+     * @notice 清算所有 Uniswap 流动性头寸和 Aave 贷款头寸后重新投资
+     * @notice 仅在金库活跃时执行再投资
      */
     modifier divestThenInvest() {
         uint256 uniswapLiquidityTokensBalance = i_uniswapLiquidityToken
             .balanceOf(address(this));
         uint256 aaveAtokensBalance = i_aaveAToken.balanceOf(address(this));
 
-        // Divest
+        // 清算现有头寸
         if (uniswapLiquidityTokensBalance > 0) {
             _uniswapDivest(IERC20(asset()), uniswapLiquidityTokensBalance);
         }
@@ -86,7 +96,7 @@ contract VaultShares is
 
         _;
 
-        // Reinvest
+        // 重新投资
         if (s_isActive) {
             _investFunds(IERC20(asset()).balanceOf(address(this)));
         }
@@ -95,9 +105,8 @@ contract VaultShares is
     // slither-disable-end reentrancy-eth
 
     /*//////////////////////////////////////////////////////////////
-                               FUNCTIONS
+                               构造函数
     //////////////////////////////////////////////////////////////*/
-    // We use a struct to avoid stack too deep errors. Thanks Solidity
     constructor(
         ConstructorData memory constructorData
     )
@@ -116,7 +125,7 @@ contract VaultShares is
         s_isActive = true;
         updateHoldingAllocation(constructorData.allocationData);
 
-        // External calls
+        // 获取外部合约地址
         i_aaveAToken = IERC20(
             IPool(constructorData.aavePool)
                 .getReserveData(address(constructorData.asset))
@@ -130,9 +139,12 @@ contract VaultShares is
         );
     }
 
+    /*//////////////////////////////////////////////////////////////
+                               公共函数
+    //////////////////////////////////////////////////////////////*/
     /**
-     * @notice Sets the vault as not active, which means that the vault guardian has quit
-     * @notice Users will not be able to invest in this vault, however, they will be able to withdraw their deposited assets
+     * @notice 设置金库为非活跃状态（守护者离职）
+     * @notice 用户仍可提取资产，但禁止新投资
      */
     function setNotActive() public onlyVaultGuardians isActive {
         s_isActive = false;
@@ -140,8 +152,8 @@ contract VaultShares is
     }
 
     /**
-     * @notice Allows Vault Guardians to update their allocation ratio (and thus, their strategy of investment)
-     * @param tokenAllocationData The new allocation data
+     * @notice 更新投资分配比例（由守护者调用）
+     * @param tokenAllocationData 新的分配数据
      */
     function updateHoldingAllocation(
         AllocationData memory tokenAllocationData
@@ -156,12 +168,13 @@ contract VaultShares is
         emit UpdatedAllocation(tokenAllocationData);
     }
 
+    /*//////////////////////////////////////////////////////////////
+                               存款逻辑
+    //////////////////////////////////////////////////////////////*/
     /**
-     * @dev See {IERC4626-deposit}. Overrides the Openzeppelin implementation.
-     *
-     * @notice Mints shares to the DAO and the guardian as a fee
+     * @dev 覆盖 Openzeppelin 的 deposit 实现
+     * @dev 向 DAO 和 守护者铸造管理费份额
      */
-    // slither-disable-start reentrancy-eth
     function deposit(
         uint256 assets,
         address receiver
@@ -189,9 +202,12 @@ contract VaultShares is
         return shares;
     }
 
+    /*//////////////////////////////////////////////////////////////
+                               内部投资逻辑
+    //////////////////////////////////////////////////////////////*/
     /**
-     * @notice Invests user deposited assets into the investable universe (hold, Uniswap, or Aave) based on the allocation data set by the vault guardian
-     * @param assets The amount of assets to invest
+     * @notice 根据当前分配配置投资用户资金
+     * @param assets 需要投资的资产数量
      */
     function _investFunds(uint256 assets) private {
         uint256 uniswapAllocation = (assets *
@@ -205,106 +221,63 @@ contract VaultShares is
         _aaveInvest(IERC20(asset()), aaveAllocation);
     }
 
-    // slither-disable-start reentrancy-benign
-    /*
-     * @notice Unintelligently just withdraws everything, and then reinvests it all.
-     * @notice Anyone can call this and pay the gas costs to rebalance the portfolio at any time.
-     * @dev We understand that this is horrible for gas costs.
+    /*//////////////////////////////////////////////////////////////
+                               操作函数
+    //////////////////////////////////////////////////////////////*/
+    /**
+     * @notice 强制清算并重新平衡投资组合
+     * @notice 任何人都可调用但需支付高昂Gas费用
+     * ？？？？？？？？？？
      */
     function rebalanceFunds() public isActive divestThenInvest nonReentrant {}
 
-    /**
-     * @dev See {IERC4626-withdraw}.
-     *
-     * We first divest our assets so we get a good idea of how many assets we hold.
-     * Then, we redeem for the user, and automatically reinvest.
-     */
-    function withdraw(
-        uint256 assets,
-        address receiver,
-        address owner
-    )
-        public
-        override(IERC4626, ERC4626)
-        divestThenInvest
-        nonReentrant
-        returns (uint256)
-    {
-        uint256 shares = super.withdraw(assets, receiver, owner);
-        return shares;
-    }
-
-    /**
-     * @dev See {IERC4626-redeem}.
-     *
-     * We first divest our assets so we get a good idea of how many assets we hold.
-     * Then, we redeem for the user, and automatically reinvest.
-     */
-    function redeem(
-        uint256 shares,
-        address receiver,
-        address owner
-    )
-        public
-        override(IERC4626, ERC4626)
-        divestThenInvest
-        nonReentrant
-        returns (uint256)
-    {
-        uint256 assets = super.redeem(shares, receiver, owner);
-        return assets;
-    }
-
-    // slither-disable-end reentrancy-eth
-    // slither-disable-end reentrancy-benign
-
     /*//////////////////////////////////////////////////////////////
-                             VIEW AND PURE
+                               视图函数
     //////////////////////////////////////////////////////////////*/
     /**
-     * @return The guardian of the vault
+     * @return 返回金库守护者地址
      */
     function getGuardian() external view returns (address) {
         return i_guardian;
     }
 
     /**
-     * @return The ratio of the amount in vaults that goes to the vault guardians and the DAO
+     * @return 返回 DAO 和 守护者管理费比例
      */
     function getGuardianAndDaoCut() external view returns (uint256) {
         return i_guardianAndDaoCut;
     }
 
     /**
-     * @return Gets the address of the Vault Guardians protocol
+     * @return 返回 VaultGuardians 协议地址
      */
     function getVaultGuardians() external view returns (address) {
         return i_vaultGuardians;
     }
 
     /**
-     * @return A bool indicating if the vault is active (has an active vault guardian and is accepting deposits) or not
+     * @return 返回金库是否处于活跃状态
      */
     function getIsActive() external view returns (bool) {
         return s_isActive;
     }
 
     /**
-     * @return The Aave aToken for the vault's underlying asset
+     * @return 返回 Aave aToken 地址
      */
     function getAaveAToken() external view returns (address) {
         return address(i_aaveAToken);
     }
 
     /**
-     * @return Uniswap's LP token
+     * @return 返回 Uniswap LP 代币地址
      */
     function getUniswapLiquidtyToken() external view returns (address) {
         return address(i_uniswapLiquidityToken);
     }
 
     /**
-     * @return The allocation data set by the vault guardian
+     * @return 返回当前投资分配配置
      */
     function getAllocationData() external view returns (AllocationData memory) {
         return s_allocationData;

@@ -13,7 +13,6 @@ contract VaultGuardianToken is ERC20, ERC20Permit, ERC20Votes, Ownable {
         Ownable(msg.sender)
     {}
 
-    // The following functions are overrides required by Solidity.
     function _update(
         address from,
         address to,

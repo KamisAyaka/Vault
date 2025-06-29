@@ -1,29 +1,3 @@
-/**
- *  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _
- * |_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_|
- * |_|                                                                                          |_|
- * |_| █████   █████                      ████   █████                                          |_|
- * |_|░░███   ░░███                      ░░███  ░░███                                           |_|
- * |_| ░███    ░███   ██████   █████ ████ ░███  ███████                                         |_|
- * |_| ░███    ░███  ░░░░░███ ░░███ ░███  ░███ ░░░███░                                          |_|
- * |_| ░░███   ███    ███████  ░███ ░███  ░███   ░███                                           |_|
- * |_|  ░░░█████░    ███░░███  ░███ ░███  ░███   ░███ ███                                       |_|
- * |_|    ░░███     ░░████████ ░░████████ █████  ░░█████                                        |_|
- * |_|     ░░░       ░░░░░░░░   ░░░░░░░░ ░░░░░    ░░░░░                                         |_|
- * |_|                                                                                          |_|
- * |_|                                                                                          |_|
- * |_|                                                                                          |_|
- * |_|   █████████                                     █████  ███                               |_|
- * |_|  ███░░░░░███                                   ░░███  ░░░                                |_|
- * |_| ███     ░░░  █████ ████  ██████   ████████   ███████  ████   ██████   ████████    █████  |_|
- * |_|░███         ░░███ ░███  ░░░░░███ ░░███░░███ ███░░███ ░░███  ░░░░░███ ░░███░░███  ███░░   |_|
- * |_|░███    █████ ░███ ░███   ███████  ░███ ░░░ ░███ ░███  ░███   ███████  ░███ ░███ ░░█████  |_|
- * |_|░░███  ░░███  ░███ ░███  ███░░███  ░███     ░███ ░███  ░███  ███░░███  ░███ ░███  ░░░░███ |_|
- * |_| ░░█████████  ░░████████░░████████ █████    ░░████████ █████░░████████ ████ █████ ██████  |_|
- * |_|  ░░░░░░░░░    ░░░░░░░░  ░░░░░░░░ ░░░░░      ░░░░░░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░ ░░░░░░   |_|
- * |_| _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _ |_|
- * |_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_|
- */
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.20;
 
@@ -33,16 +7,15 @@ import {IVaultShares, IVaultData} from "../interfaces/IVaultShares.sol";
 import {AStaticTokenData, IERC20} from "../abstract/AStaticTokenData.sol";
 import {VaultGuardianToken} from "../dao/VaultGuardianToken.sol";
 
-/*
+/**
  * @title VaultGuardiansBase
  * @author Vault Guardian
- * @notice This contract is the base contract for the VaultGuardians contract.
- * @notice it includes all the functionality of a user or guardian interacting with the protocol
+ * @notice 基础合约，包含用户或守护者与协议交互的所有核心功能
  */
-
 contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     using SafeERC20 for IERC20;
 
+    // 错误定义
     error VaultGuardiansBase__NotEnoughWeth(
         uint256 amount,
         uint256 amountNeeded
@@ -60,11 +33,7 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     error VaultGuardiansBase__NotApprovedToken(address token);
 
     /*//////////////////////////////////////////////////////////////
-                           TYPE DECLARATIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /*//////////////////////////////////////////////////////////////
-                            STATE VARIABLES
+                            状态变量
     //////////////////////////////////////////////////////////////*/
     address private immutable i_aavePool;
     address private immutable i_uniswapV2Router;
@@ -72,17 +41,17 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
 
     uint256 private constant GUARDIAN_FEE = 0.1 ether;
 
-    // DAO updatable values
+    // DAO 可更新的值
     uint256 internal s_guardianStakePrice = 10 ether;
     uint256 internal s_guardianAndDaoCut = 1000;
 
-    // The guardian's address mapped to the asset, mapped to the allocation data
+    // 守护者地址 → 资产 → 金库份额合约映射
     mapping(address guardianAddress => mapping(IERC20 asset => IVaultShares vaultShares))
         private s_guardians;
     mapping(address token => bool approved) private s_isApprovedToken;
 
     /*//////////////////////////////////////////////////////////////
-                                 EVENTS
+                                 事件
     //////////////////////////////////////////////////////////////*/
     event GuardianAdded(address guardianAddress, IERC20 token);
     event GaurdianRemoved(address guardianAddress, IERC20 token);
@@ -102,8 +71,9 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     );
 
     /*//////////////////////////////////////////////////////////////
-                               MODIFIERS
+                               修饰符
     //////////////////////////////////////////////////////////////*/
+    /// @dev 仅当调用者是特定代币的守护者时通过
     modifier onlyGuardian(IERC20 token) {
         if (address(s_guardians[msg.sender][token]) == address(0)) {
             revert VaultGuardiansBase__NotAGuardian(msg.sender, token);
@@ -112,7 +82,7 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     }
 
     /*//////////////////////////////////////////////////////////////
-                               FUNCTIONS
+                               构造函数
     //////////////////////////////////////////////////////////////*/
     constructor(
         address aavePool,
@@ -132,13 +102,13 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     }
 
     /*//////////////////////////////////////////////////////////////
-                           EXTERNAL FUNCTIONS
+                           外部函数
     //////////////////////////////////////////////////////////////*/
-    /*
-     * @notice allows a user to become a guardian
-     * @notice they have to send an ETH amount equal to the fee, and a WETH amount equal to the stake price
-     *
-     * @param wethAllocationData the allocation data for the WETH vault
+    //能不能合并？？
+    /**
+     * @notice 成为守护者的入口函数
+     * @notice 需支付等值ETH手续费和WETH质押金
+     * @param wethAllocationData WETH金库的分配配置
      */
     function becomeGuardian(
         AllocationData memory wethAllocationData
@@ -162,16 +132,16 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     }
 
     /**
-     * @notice Allows anyone to become a vault guardian for any one of the other supported tokens (USDC, LINK)
-     * @notice However, only WETH vault guardians can become vault guardians for other tokens
-     * @param allocationData A struct indicating the ratio of asset tokens to hold, invest in Aave and Uniswap (based on Vault Guardian strategy)
-     * @param token The token to become a Vault Guardian for
+     * @notice 成为非WETH代币的守护者
+     * @notice 只有WETH守护者才能成为其他代币的守护者
+     * @param allocationData 金库资产分配策略
+     * @param token 需要守护的目标代币
      */
     function becomeTokenGuardian(
         AllocationData memory allocationData,
         IERC20 token
     ) external onlyGuardian(i_weth) returns (address) {
-        //slither-disable-next-line uninitialized-local
+        // slither-disable-next-line uninitialized-local
         VaultShares tokenVault;
         if (address(token) == address(i_tokenOne)) {
             tokenVault = new VaultShares(
@@ -193,8 +163,8 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
             tokenVault = new VaultShares(
                 IVaultShares.ConstructorData({
                     asset: token,
-                    vaultName: TOKEN_ONE_VAULT_NAME,
-                    vaultSymbol: TOKEN_ONE_VAULT_SYMBOL,
+                    vaultName: TOKEN_TWO_VAULT_NAME,
+                    vaultSymbol: TOKEN_TWO_VAULT_SYMBOL,
                     guardian: msg.sender,
                     allocationData: allocationData,
                     aavePool: i_aavePool,
@@ -202,7 +172,7 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
                     guardianAndDaoCut: s_guardianAndDaoCut,
                     vaultGuardians: address(this),
                     weth: address(i_weth),
-                    usdc: address(i_tokenOne)
+                    usdc: address(i_tokenTwo)
                 })
             );
         } else {
@@ -211,12 +181,11 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
         return _becomeTokenGuardian(token, tokenVault);
     }
 
-    /*
-     * @notice allows a guardian to quit
-     * @dev this will only work if they only have a WETH vault left, a guardian can't quit if they have other vaults
-     * @dev they will need to approve this contract to spend their shares tokens
-     * @dev this will set the vault to no longer be active, meaning users can only withdraw tokens, and no longer deposit to the vault
-     * @dev tokens should also no longer be invested into the protocols
+    /**
+     * @notice 主动退出WETH守护者角色
+     * @notice 只有仅持有WETH金库的守护者才能调用
+     * @notice 需要授权本合约操作您的份额代币
+     * @notice 退出后金库进入非活跃状态，禁止新投资
      */
     function quitGuardian() external onlyGuardian(i_weth) returns (uint256) {
         if (_guardianHasNonWethVaults(msg.sender)) {
@@ -225,9 +194,9 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
         return _quitGuardian(i_weth);
     }
 
-    /*
-     * See VaultGuardiansBase::quitGuardian()
-     * The only difference here, is that this function is for non-WETH vaults
+    /**
+     * @notice 退出非WETH代币守护者角色
+     * @param token 需要退出的代币
      */
     function quitGuardian(
         IERC20 token
@@ -239,9 +208,9 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     }
 
     /**
-     * @notice Allows Vault Guardians to update their allocation ratio (and thus, their strategy of investment)
-     * @param token The token vault whose allocation ratio is to be updated
-     * @param tokenAllocationData The new allocation data
+     * @notice 更新金库资产分配策略
+     * @param token 需要更新的代币
+     * @param tokenAllocationData 新的分配配置
      */
     function updateHoldingAllocation(
         IERC20 token,
@@ -254,19 +223,11 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     }
 
     /*//////////////////////////////////////////////////////////////
-                            PUBLIC FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /*//////////////////////////////////////////////////////////////
-                           INTERNAL FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
-
-    /*//////////////////////////////////////////////////////////////
-                           PRIVATE FUNCTIONS
+                   私有函数
     //////////////////////////////////////////////////////////////*/
     function _quitGuardian(IERC20 token) private returns (uint256) {
         IVaultShares tokenVault = IVaultShares(s_guardians[msg.sender][token]);
-        s_guardians[msg.sender][token] = IVaultShares(address(0));
+        s_guardians[msg.sender][token] = IVaultShares(address(0)); //？？？为什么是这个地址？
         emit GaurdianRemoved(msg.sender, token);
         tokenVault.setNotActive();
         uint256 maxRedeemable = tokenVault.maxRedeem(msg.sender);
@@ -279,8 +240,8 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     }
 
     /**
-     * @notice Checks if the vault guardian is owner of vaults other than WETH vaults
-     * @param guardian the vault guardian
+     * @notice 检查守护者是否持有非WETH金库
+     * @param guardian 需要验证的守护者地址
      */
     function _guardianHasNonWethVaults(
         address guardian
@@ -293,11 +254,11 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     }
 
     // slither-disable-start reentrancy-eth
-    /*
-     * @notice allows a user to become a guardian
-     * @notice guardians are given a VaultGuardianToken as payment
-     * @param token the token that the guardian will be guarding
-     * @param tokenVault the vault that the guardian will be guarding
+    /**
+     * @notice 成为代币守护者的内部实现
+     * @notice 铸造治理代币作为质押奖励
+     * @param token 被守护的代币
+     * @param tokenVault 对应的金库合约
      */
     function _becomeTokenGuardian(
         IERC20 token,
@@ -321,16 +282,12 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     // slither-disable-end reentrancy-eth
 
     /*//////////////////////////////////////////////////////////////
-                   INTERNAL AND PRIVATE VIEW AND PURE
-    //////////////////////////////////////////////////////////////*/
-
-    /*//////////////////////////////////////////////////////////////
-                   EXTERNAL AND PUBLIC VIEW AND PURE
+                   视图和纯函数
     //////////////////////////////////////////////////////////////*/
     /**
-     * @notice Gets the vault for a given vault guardian and a given asset token
-     * @param guardian the vault guardian
-     * @param token the vault's underlying asset token
+     * @notice 获取守护者对应的金库合约
+     * @param guardian 守护者地址
+     * @param token 金库底层资产
      */
     function getVaultFromGuardianAndToken(
         address guardian,
@@ -340,36 +297,36 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     }
 
     /**
-     * @notice Checks if the given token is supported by the protocol
-     * @param token the token to check for
+     * @notice 检查代币是否被协议支持
+     * @param token 需要验证的代币地址
      */
     function isApprovedToken(address token) external view returns (bool) {
         return s_isApprovedToken[token];
     }
 
     /**
-     * @return Address of the Aave pool
+     * @return Aave池地址
      */
     function getAavePool() external view returns (address) {
         return i_aavePool;
     }
 
     /**
-     * @return Address of the Uniswap v2 router
+     * @return UniswapV2路由器地址
      */
     function getUniswapV2Router() external view returns (address) {
         return i_uniswapV2Router;
     }
 
     /**
-     * @return Retrieves the stake price that users have to stake to become vault guardians
+     * @return 获取守护者质押价格
      */
     function getGuardianStakePrice() external view returns (uint256) {
         return s_guardianStakePrice;
     }
 
     /**
-     * @return The ratio of the amount in vaults that goes to the vault guardians and the DAO
+     * @return 获取DAO和守护者管理费比例
      */
     function getGuardianAndDaoCut() external view returns (uint256) {
         return s_guardianAndDaoCut;

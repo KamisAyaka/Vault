@@ -20,7 +20,9 @@ interface IVaultShares is IERC4626, IVaultData {
         address usdc;
     }
 
-    function updateHoldingAllocation(AllocationData memory tokenAllocationData) external;
+    function updateHoldingAllocation(
+        AllocationData memory tokenAllocationData
+    ) external;
 
     function setNotActive() external;
 }

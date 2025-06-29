@@ -1,66 +1,95 @@
-## Foundry
+# Vault 金库守护者系统
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+- [Vault 金库守护者系统](#vault-金库守护者系统)
+  - [项目简介](#项目简介)
+  - [用户流程](#用户流程)
+  - [DAO 治理](#dAO治理)
+  - [项目概述](#项目概述)
+- [快速入门](#快速入门)
+  - [环境要求](#环境要求)
+  - [快速启动](#快速启动)
+    - [可选 Gitpod 部署](#可选gitpod部署)
+- [使用指南](#使用指南)
+  - [测试方法](#测试方法)
+    - [测试覆盖率](#测试覆盖率)
+- [其他信息](#其他信息)
+- [审计范围细节](#审计范围细节)
 
-Foundry consists of:
+## 项目简介
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+本协议允许用户将特定 ERC20 代币存入由人类管理的[ERC4626 金库](https://eips.ethereum.org/EIPS/eip-4626)，该管理人称为`金库守护者`。金库守护者的目标是通过管理金库资产来最大化用户存款的价值。
 
-## Documentation
+你可以将`金库守护者`理解为基金管理员。
 
-https://book.getfoundry.sh/
+为防止金库守护者挪用资金，守护者只能将资金存入特定协议：
 
-## Usage
+- [Aave v3](https://aave.com/)
+- [Uniswap v2](https://uniswap.org/)
+- 无操作（仅持有）
 
-### Build
+金库守护者可以自由在这三个协议之间进行资金调动，但不能将资金转移到其他地址。
 
-```shell
-$ forge build
+金库守护者的目标是通过在这些协议间调仓获取最高收益。守护者会收取绩效费用，收益越高，获得的费用越多。
+
+任何人都可以通过质押一定数量的 ERC20 代币成为金库守护者。这被称为`守护者质押`。如果守护者想停止担任此角色，必须返还全部用户存款并取回质押金。
+
+用户可以随时在不同守护者之间转移资金。
+
+该协议设计为可升级模式，当可投资的平台发生变化时，可以灵活更新。
+
+## 用户流程
+
+1. 用户向守护者的金库存入 ERC20 代币
+2. 守护者根据其策略自动调配资金
+3. 守护者可随时更新策略配置并调整资金分配
+4. 用户通过调用`redeem`或`withdraw`退出资金池
+
+## DAO 治理
+
+守护者可通过担任守护者角色获得 DAO 代币。DAO 负责：
+
+- 更新定价参数
+- 获取所有守护者绩效费用的分成
+
+## 项目概述
+
+用户可通过质押 ERC20 代币成为金库守护者。其他用户可向其分配资金以获取更高收益。守护者可在 Uniswap、Aave 或直接持有之间调配资金。守护者有经济激励最大化收益，因为其收益与绩效挂钩。
+
+# 快速入门
+
+## 环境要求
+
+- [git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git)（版本控制工具）
+  - 安装成功后运行 `git --version` 应显示 `git version x.x.x`
+- [foundry](https://getfoundry.sh/)（智能合约开发框架）
+  - 安装成功后运行 `forge --version` 应显示 `forge 0.2.0 (816e00b 2023-03-16T00:05:26.396218Z)`
+
+## 快速启动
+
+# 使用指南
+
+## 测试方法
+
+设置环境变量`RPC_URL_MAINNET`为以太坊主网 RPC 节点地址。该变量用于需要分叉主网状态的测试用例。
+
+然后运行：
+
+```
+forge test
 ```
 
-### Test
+### 测试覆盖率
 
-```shell
-$ forge test
+```
+forge coverage
 ```
 
-### Format
+如需生成详细覆盖率报告：
 
-```shell
-$ forge fmt
+```
+forge coverage --report debug
 ```
 
-### Gas Snapshots
+# 其他信息
 
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+- [文档标题样式来自 t11/headers](https://github.com/transmissions11/headers)

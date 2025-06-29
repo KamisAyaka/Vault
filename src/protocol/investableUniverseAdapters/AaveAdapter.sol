@@ -17,9 +17,9 @@ contract AaveAdapter {
     }
 
     /**
-     * @notice Used by the vault to deposit vault's underlying asset token as lending amount in Aave v3
-     * @param asset The vault's underlying asset token
-     * @param amount The amount of vault's underlying asset token to invest
+     * @notice 金库使用该函数将底层资产代币作为借贷金额存入Aave v3
+     * @param asset 金库的底层资产代币
+     * @param amount 要投资的底层资产代币数量
      */
     function _aaveInvest(IERC20 asset, uint256 amount) internal {
         bool succ = asset.approve(address(i_aavePool), amount);
@@ -29,21 +29,21 @@ contract AaveAdapter {
         i_aavePool.supply({
             asset: address(asset),
             amount: amount,
-            onBehalfOf: address(this), // decides who get's Aave's aTokens for the investment. In this case, mint it to the vault
+            onBehalfOf: address(this), // 决定谁获得Aave的aToken。在此情况下，铸造给金库
             referralCode: 0
         });
     }
 
     /**
-     * @notice Used by the vault to withdraw the its underlying asset token deposited as lending amount in Aave v3
-     * @param token The vault's underlying asset token to withdraw
-     * @param amount The amount of vault's underlying asset token to withdraw
+     * @notice 金库使用该函数提取其作为借贷金额存入Aave v3的底层资产代币
+     * @param token 要提取的金库底层资产代币
+     * @param amount 要提取的底层资产代币数量
      */
     function _aaveDivest(
         IERC20 token,
         uint256 amount
     ) internal returns (uint256 amountOfAssetReturned) {
-        i_aavePool.withdraw({
+        amountOfAssetReturned = i_aavePool.withdraw({
             asset: address(token),
             amount: amount,
             to: address(this)

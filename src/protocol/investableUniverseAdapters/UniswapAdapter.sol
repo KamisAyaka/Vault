@@ -38,23 +38,22 @@ contract UniswapAdapter is AStaticUSDCData {
     // slither-disable-start reentrancy-benign
     // slither-disable-start reentrancy-events
     /**
-     * @notice The vault holds only one type of asset token. However, we need to provide liquidity to Uniswap in a pair
-     * @notice So we swap out half of the vault's underlying asset token for WETH if the asset token is USDC or WETH
-     * @notice However, if the asset token is WETH, we swap half of it for USDC (tokenOne)
-     * @notice The tokens we obtain are then added as liquidity to Uniswap pool, and LP tokens are minted to the vault
-     * @param token The vault's underlying asset token
-     * @param amount The amount of vault's underlying asset token to use for the investment
+     * @notice 金库仅持有一种资产代币。但我们需要提供流动性到Uniswap的交易对
+     * @notice 所以如果资产是USDC或WETH，我们用一半的资产兑换WETH
+     * @notice 如果资产是WETH，则兑换一半为USDC（tokenOne）
+     * @notice 然后将获得的代币添加到Uniswap池，铸造LP代币给金库
+     * @param token 金库的底层资产代币
+     * @param amount 用于投资的资产数量
      */
     function _uniswapInvest(IERC20 token, uint256 amount) internal {
         IERC20 counterPartyToken = token == i_weth ? i_tokenOne : i_weth;
-        // We will do half in WETH and half in the token
+        // 我们将一半用于WETH，一半用于该代币
         uint256 amountOfTokenToSwap = amount / 2;
-        // the path array is supplied to the Uniswap router, which allows us to create swap paths
-        // in case a pool does not exist for the input token and the output token
-        // however, in this case, we are sure that a swap path exists for all pair permutations of WETH, USDC and LINK
-        // (excluding pair permutations including the same token type)
-        // the element at index 0 is the address of the input token
-        // the element at index 1 is the address of the output token
+        // 路径数组传递给Uniswap路由器，允许创建交换路径
+        // 当输入代币和输出代币的池不存在时也适用
+        // 但在本例中，我们确定WETH、USDC和LINK的所有组合都存在交易对
+        // 索引0是输入代币地址
+        // 索引1是输出代币地址
         s_pathArray = [address(token), address(counterPartyToken)];
 
         bool succ = token.approve(
@@ -84,7 +83,7 @@ contract UniswapAdapter is AStaticUSDCData {
             revert UniswapAdapter__TransferFailed();
         }
 
-        // amounts[1] should be the WETH amount we got back
+        // amounts[1]应为获得的WETH数量
         (
             uint256 tokenAmount,
             uint256 counterPartyTokenAmount,
@@ -103,10 +102,10 @@ contract UniswapAdapter is AStaticUSDCData {
     }
 
     /**
-     * @notice The LP tokens of the added liquidity are burnt
-     * @notice The other token (which isn't the vault's underlying asset token) is swapped for the vault's underlying asset token
-     * @param token The vault's underlying asset token
-     * @param liquidityAmount The amount of LP tokens to burn
+     * @notice 销毁添加的流动性对应的LP代币
+     * @notice 将非金库底层资产的代币兑换回底层资产
+     * @param token 金库的底层资产代币
+     * @param liquidityAmount 要销毁的LP代币数量
      */
     function _uniswapDivest(
         IERC20 token,

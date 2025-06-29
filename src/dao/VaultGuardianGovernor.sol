@@ -28,8 +28,6 @@ contract VaultGuardianGovernor is
         return 7 days;
     }
 
-    // The following functions are overrides required by Solidity.
-
     function quorum(
         uint256 blockNumber
     )

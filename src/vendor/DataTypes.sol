@@ -4,77 +4,76 @@ pragma solidity 0.8.20;
 // https://github.com/aave/aave-v3-core/blob/master/contracts/protocol/libraries/types/DataTypes.sol
 library DataTypes {
     struct ReserveData {
-        //stores the reserve configuration
+        // 存储储备池配置信息
         ReserveConfigurationMap configuration;
-        //the liquidity index. Expressed in ray
+        // 流动性指数，以ray为单位
         uint128 liquidityIndex;
-        //the current supply rate. Expressed in ray
+        // 当前供应利率，以ray为单位
         uint128 currentLiquidityRate;
-        //variable borrow index. Expressed in ray
+        // 可变借贷指数，以ray为单位
         uint128 variableBorrowIndex;
-        //the current variable borrow rate. Expressed in ray
+        // 当前可变借贷利率，以ray为单位
         uint128 currentVariableBorrowRate;
-        //the current stable borrow rate. Expressed in ray
+        // 当前稳定借贷利率，以ray为单位
         uint128 currentStableBorrowRate;
-        //timestamp of last update
+        // 最后更新时间戳
         uint40 lastUpdateTimestamp;
-        //the id of the reserve. Represents the position in the list of the active reserves
+        // 储备池ID，表示在活跃储备池列表中的位置
         uint16 id;
-        //aToken address
+        // aToken地址
         address aTokenAddress;
-        //stableDebtToken address
+        // 稳定债务代币地址
         address stableDebtTokenAddress;
-        //variableDebtToken address
+        // 可变债务代币地址
         address variableDebtTokenAddress;
-        //address of the interest rate strategy
+        // 利率策略地址
         address interestRateStrategyAddress;
-        //the current treasury balance, scaled
+        // 当前金库收益余额，已缩放
         uint128 accruedToTreasury;
-        //the outstanding unbacked aTokens minted through the bridging feature
+        // 通过桥接功能铸造的未担保aToken余额
         uint128 unbacked;
-        //the outstanding debt borrowed against this asset in isolation mode
+        // 在隔离模式下借出的该资产债务总额
         uint128 isolationModeTotalDebt;
     }
 
     struct ReserveConfigurationMap {
-        //bit 0-15: LTV
-        //bit 16-31: Liq. threshold
-        //bit 32-47: Liq. bonus
-        //bit 48-55: Decimals
-        //bit 56: reserve is active
-        //bit 57: reserve is frozen
-        //bit 58: borrowing is enabled
-        //bit 59: stable rate borrowing enabled
-        //bit 60: asset is paused
-        //bit 61: borrowing in isolation mode is enabled
-        //bit 62: siloed borrowing enabled
-        //bit 63: flashloaning enabled
-        //bit 64-79: reserve factor
-        //bit 80-115 borrow cap in whole tokens, borrowCap == 0 => no cap
-        //bit 116-151 supply cap in whole tokens, supplyCap == 0 => no cap
-        //bit 152-167 liquidation protocol fee
-        //bit 168-175 eMode category
-        //bit 176-211 unbacked mint cap in whole tokens, unbackedMintCap == 0 => minting disabled
-        //bit 212-251 debt ceiling for isolation mode with (ReserveConfiguration::DEBT_CEILING_DECIMALS) decimals
-        //bit 252-255 unused
+        // bit 0-15: 贷款价值比(LTV)
+        // bit 16-31: 清算阈值
+        // bit 32-47: 清算奖励
+        // bit 48-55: 小数位数
+        // bit 56: 储备池是否激活
+        // bit 57: 储备池是否冻结
+        // bit 58: 借贷是否启用
+        // bit 59: 稳定利率借贷是否启用
+        // bit 60: 资产是否暂停
+        // bit 61: 隔离模式借贷是否启用
+        // bit 62: 单一借贷模式启用
+        // bit 63: 闪电贷启用
+        // bit 64-79: 储备因子
+        // bit 80-115 整数借贷上限，0表示无上限
+        // bit 116-151 整数供应上限，0表示无上限
+        // bit 152-167 清算协议费用
+        // bit 168-175 eMode类别
+        // bit 176-211 未担保铸造上限，0表示禁用铸造
+        // bit 212-251 隔离模式债务上限（带DEBT_CEILING_DECIMALS小数位）
+        // bit 252-255 保留位
         uint256 data;
     }
 
     struct UserConfigurationMap {
         /**
-         * @dev Bitmap of the users collaterals and borrows. It is divided in pairs of bits, one pair per asset.
-         * The first bit indicates if an asset is used as collateral by the user, the second whether an
-         * asset is borrowed by the user.
+         * @dev 用户抵押品和借贷的位图。按位对划分，每对位代表一个资产。
+         * 第一位表示该资产是否作为用户抵押品，第二位表示是否被用户借贷
          */
         uint256 data;
     }
 
     struct EModeCategory {
-        // each eMode category has a custom ltv and liquidation threshold
+        // 每个eMode类别有自定义LTV和清算阈值
         uint16 ltv;
         uint16 liquidationThreshold;
         uint16 liquidationBonus;
-        // each eMode category may or may not have a custom oracle to override the individual assets price oracles
+        // 每个eMode类别可能有自定义预言机覆盖资产价格
         address priceSource;
         string label;
     }
