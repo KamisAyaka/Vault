@@ -163,8 +163,8 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
             tokenVault = new VaultShares(
                 IVaultShares.ConstructorData({
                     asset: token,
-                    vaultName: TOKEN_TWO_VAULT_NAME,
-                    vaultSymbol: TOKEN_TWO_VAULT_SYMBOL,
+                    vaultName: TOKEN_TWO_VAULT_NAME, // 修复：使用正确的tokenTwo名称参数
+                    vaultSymbol: TOKEN_TWO_VAULT_SYMBOL, // 修复：使用正确的tokenTwo符号参数
                     guardian: msg.sender,
                     allocationData: allocationData,
                     aavePool: i_aavePool,
@@ -172,7 +172,7 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
                     guardianAndDaoCut: s_guardianAndDaoCut,
                     vaultGuardians: address(this),
                     weth: address(i_weth),
-                    usdc: address(i_tokenTwo)
+                    usdc: address(i_tokenOne)
                 })
             );
         } else {
@@ -236,6 +236,8 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
             msg.sender,
             msg.sender
         );
+        // 添加代币销毁逻辑
+        i_vgToken.burn(msg.sender, s_guardianStakePrice);
         return numberOfAssetsReturned;
     }
 

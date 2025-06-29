@@ -21,11 +21,11 @@ contract VaultGuardianGovernor is
     {}
 
     function votingDelay() public pure override returns (uint256) {
-        return 1 days;
+        return 7200;
     }
 
     function votingPeriod() public pure override returns (uint256) {
-        return 7 days;
+        return 50400;
     }
 
     function quorum(

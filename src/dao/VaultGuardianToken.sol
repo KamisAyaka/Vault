@@ -30,4 +30,17 @@ contract VaultGuardianToken is ERC20, ERC20Permit, ERC20Votes, Ownable {
     function mint(address to, uint256 amount) external onlyOwner {
         _mint(to, amount);
     }
+
+    /**
+     * @notice 销毁指定账户的代币
+     * @param account 要销毁代币的账户地址
+     * @param amount 要销毁的代币数量
+     */
+    function burn(address account, uint256 amount) public virtual {
+        require(
+            msg.sender == owner() || msg.sender == address(this),
+            "Only owner or contract can burn"
+        );
+        _burn(account, amount);
+    }
 }

@@ -36,16 +36,29 @@ contract UniswapRouterMock is IUniswapV2Router01, ERC20Mock {
         address,
         uint256
     ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
-        ERC20Mock(tokenA).transferFrom(msg.sender, address(this), amountADesired);
-        ERC20Mock(tokenB).transferFrom(msg.sender, address(this), amountBDesired);
+        ERC20Mock(tokenA).transferFrom(
+            msg.sender,
+            address(this),
+            amountADesired
+        );
+        ERC20Mock(tokenB).transferFrom(
+            msg.sender,
+            address(this),
+            amountBDesired
+        );
         _mint(msg.sender, liquidity);
         return (amountADesired, amountBDesired, 0);
     }
 
-    function removeLiquidity(address tokenA, address tokenB, uint256, uint256, uint256, address to, uint256)
-        external
-        returns (uint256 amountA, uint256 amountB)
-    {
+    function removeLiquidity(
+        address tokenA,
+        address tokenB,
+        uint256,
+        uint256,
+        uint256,
+        address to,
+        uint256
+    ) public returns (uint256 amountA, uint256 amountB) {
         uint256 tokenABalance = ERC20Mock(tokenA).balanceOf(address(this));
         uint256 tokenBBalance = ERC20Mock(tokenB).balanceOf(address(this));
 
@@ -82,6 +95,16 @@ contract UniswapRouterMock is IUniswapV2Router01, ERC20Mock {
         amounts[1] = amountOutMin;
     }
 
-    // add this to be excluded from coverage report
-    function testA() public {}
+    function getAmountsOut(
+        uint256 amountIn,
+        address[] calldata path
+    ) external pure returns (uint256[] memory amounts) {
+        amounts = new uint256[](path.length);
+        amounts[0] = amountIn;
+        // 简化逻辑：假设每个交易对的兑换率是 1:1
+        for (uint i = 1; i < path.length; i++) {
+            amounts[i] = amountIn;
+        }
+        return amounts;
+    }
 }

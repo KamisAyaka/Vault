@@ -6,6 +6,7 @@ import {IVaultShares, IERC4626} from "../interfaces/IVaultShares.sol";
 import {AaveAdapter, IPool} from "./investableUniverseAdapters/AaveAdapter.sol";
 import {UniswapAdapter} from "./investableUniverseAdapters/UniswapAdapter.sol";
 import {DataTypes} from "../vendor/DataTypes.sol";
+import {IUniswapV2Pair} from "../vendor/IUniswapV2Pair.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
@@ -168,6 +169,24 @@ contract VaultShares is
         emit UpdatedAllocation(tokenAllocationData);
     }
 
+    function totalAssets()
+        public
+        view
+        override(ERC4626, IERC4626)
+        returns (uint256)
+    {
+        // 1. 获取合约中剩余的底层资产余额
+        uint256 baseBalance = IERC20(asset()).balanceOf(address(this));
+
+        // 2. 添加 Aave 投资价值（aToken 与底层资产 1:1 对应）
+        uint256 aaveBalance = i_aaveAToken.balanceOf(address(this));
+
+        // 3. 添加 Uniswap 投资价值（计算 LP Token 对应的底层资产数量）
+        uint256 uniswapBalance = _getUniswapUnderlyingAssetValue();
+
+        return baseBalance + aaveBalance + uniswapBalance;
+    }
+
     /*//////////////////////////////////////////////////////////////
                                存款逻辑
     //////////////////////////////////////////////////////////////*/
@@ -219,6 +238,31 @@ contract VaultShares is
 
         _uniswapInvest(IERC20(asset()), uniswapAllocation);
         _aaveInvest(IERC20(asset()), aaveAllocation);
+    }
+
+    // 计算 Uniswap LP Token 对应的底层资产价值
+    function _getUniswapUnderlyingAssetValue() private view returns (uint256) {
+        uint256 liquidityTokens = i_uniswapLiquidityToken.balanceOf(
+            address(this)
+        );
+        if (liquidityTokens == 0) return 0;
+
+        IUniswapV2Pair pair = IUniswapV2Pair(address(i_uniswapLiquidityToken));
+        (uint112 reserve0, uint112 reserve1, ) = pair.getReserves();
+        uint256 totalSupply = pair.totalSupply();
+
+        // 计算 LP Token 对应的代币数量
+        uint256 amount0 = (uint256(reserve0) * liquidityTokens) / totalSupply;
+        uint256 amount1 = (uint256(reserve1) * liquidityTokens) / totalSupply;
+
+        // 识别底层资产在交易对中的位置
+        address underlying = asset();
+        if (underlying == pair.token0()) {
+            return amount0;
+        } else if (underlying == pair.token1()) {
+            return amount1;
+        }
+        return 0; // 理论不会发生
     }
 
     /*//////////////////////////////////////////////////////////////
