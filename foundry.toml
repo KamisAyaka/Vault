@@ -2,10 +2,12 @@
 src = "src"
 out = "out"
 libs = ["lib"]
-viaIR = true
-optimizer = true
+via_ir = true
+optimizer = true         # 必须开启
+optimizer_runs = 10 # 设置更高的优化等级
 
-remappings = ['@openzeppelin/contracts=lib/openzeppelin-contracts/contracts']
+remappings = ["@openzeppelin/contracts=lib/openzeppelin-contracts/contracts"]
+
 
 [rpc_endpoints]
 mainnet = "${RPC_URL_MAINNET}"

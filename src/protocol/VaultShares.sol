@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.20;
+pragma solidity ^0.8.20;
 
 import {ERC4626, ERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {IVaultShares, IERC4626} from "../interfaces/IVaultShares.sol";
@@ -23,7 +23,7 @@ contract VaultShares is
 {
     // 错误定义
     error VaultShares__DepositMoreThanMax(uint256 amount, uint256 max);
-    error VaultShares__NotGuardian();
+    error VaultShares__NotGuardian(address sender, address guardian);
     error VaultShares__NotVaultGuardianContract();
     error VaultShares__AllocationNot100Percent(uint256 totalAllocation);
     error VaultShares__NotActive();
@@ -49,6 +49,12 @@ contract VaultShares is
     event NoLongerActive();
     event FundsInvested();
 
+    /// @notice 守护者更新Uniswap滑点容忍度事件
+    event SlippageToleranceUpdatedByGuardian(
+        address indexed guardian,
+        uint256 tolerance
+    );
+
     /*//////////////////////////////////////////////////////////////
                                修饰符
     //////////////////////////////////////////////////////////////*/
@@ -56,7 +62,7 @@ contract VaultShares is
     /// @dev 仅守护者可调用
     modifier onlyGuardian() {
         if (msg.sender != i_guardian) {
-            revert VaultShares__NotGuardian();
+            revert VaultShares__NotGuardian(msg.sender, i_guardian);
         }
         _;
     }
@@ -78,32 +84,34 @@ contract VaultShares is
     }
 
     // slither-disable-start reentrancy-eth
+    // slither-disable-start reentrancy-benign
+    // slither-disable-start reentrancy-events
     /**
      * @notice 清算所有 Uniswap 流动性头寸和 Aave 贷款头寸后重新投资
      * @notice 仅在金库活跃时执行再投资
      */
     modifier divestThenInvest() {
-        uint256 uniswapLiquidityTokensBalance = i_uniswapLiquidityToken
-            .balanceOf(address(this));
-        uint256 aaveAtokensBalance = i_aaveAToken.balanceOf(address(this));
-
-        // 清算现有头寸
-        if (uniswapLiquidityTokensBalance > 0) {
-            _uniswapDivest(IERC20(asset()), uniswapLiquidityTokensBalance);
-        }
-        if (aaveAtokensBalance > 0) {
-            _aaveDivest(IERC20(asset()), aaveAtokensBalance);
-        }
-
+        _liquidatePositions();
         _;
-
-        // 重新投资
         if (s_isActive) {
             _investFunds(IERC20(asset()).balanceOf(address(this)));
         }
     }
 
-    // slither-disable-end reentrancy-eth
+    // 新增的清算函数
+    function _liquidatePositions() private {
+        uint256 liquidityTokens = i_uniswapLiquidityToken.balanceOf(
+            address(this)
+        );
+        if (liquidityTokens > 0) {
+            _uniswapDivest(IERC20(asset()), liquidityTokens);
+        }
+
+        liquidityTokens = i_aaveAToken.balanceOf(address(this));
+        if (liquidityTokens > 0) {
+            _aaveDivest(IERC20(asset()), liquidityTokens);
+        }
+    }
 
     /*//////////////////////////////////////////////////////////////
                                构造函数
@@ -229,15 +237,22 @@ contract VaultShares is
      * @param assets 需要投资的资产数量
      */
     function _investFunds(uint256 assets) private {
+        if (assets == 0) return;
+
+        // 计算分配金额并执行投资
         uint256 uniswapAllocation = (assets *
             s_allocationData.uniswapAllocation) / ALLOCATION_PRECISION;
+        if (uniswapAllocation > 0) {
+            _uniswapInvest(IERC20(asset()), uniswapAllocation);
+        }
+
         uint256 aaveAllocation = (assets * s_allocationData.aaveAllocation) /
             ALLOCATION_PRECISION;
+        if (aaveAllocation > 0) {
+            _aaveInvest(IERC20(asset()), aaveAllocation);
+        }
 
         emit FundsInvested();
-
-        _uniswapInvest(IERC20(asset()), uniswapAllocation);
-        _aaveInvest(IERC20(asset()), aaveAllocation);
     }
 
     // 计算 Uniswap LP Token 对应的底层资产价值
@@ -251,18 +266,12 @@ contract VaultShares is
         (uint112 reserve0, uint112 reserve1, ) = pair.getReserves();
         uint256 totalSupply = pair.totalSupply();
 
-        // 计算 LP Token 对应的代币数量
-        uint256 amount0 = (uint256(reserve0) * liquidityTokens) / totalSupply;
-        uint256 amount1 = (uint256(reserve1) * liquidityTokens) / totalSupply;
-
-        // 识别底层资产在交易对中的位置
+        // 计算并返回对应储备量
         address underlying = asset();
         if (underlying == pair.token0()) {
-            return amount0;
-        } else if (underlying == pair.token1()) {
-            return amount1;
+            return (uint256(reserve0) * liquidityTokens) / totalSupply;
         }
-        return 0; // 理论不会发生
+        return (uint256(reserve1) * liquidityTokens) / totalSupply;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -273,7 +282,7 @@ contract VaultShares is
      * @notice 任何人都可调用但需支付高昂Gas费用
      * ？？？？？？？？？？
      */
-    function rebalanceFunds() public isActive divestThenInvest nonReentrant {}
+    //function rebalanceFunds() public isActive divestThenInvest nonReentrant {}
 
     /*//////////////////////////////////////////////////////////////
                                视图函数
@@ -325,5 +334,31 @@ contract VaultShares is
      */
     function getAllocationData() external view returns (AllocationData memory) {
         return s_allocationData;
+    }
+
+    /**
+     * @notice 守护者更新Uniswap滑点容忍度
+     * @param tolerance 新的滑点容忍值（以万分之一为单位）
+     * @dev 示例：200 = 2%
+     * @dev 需守护者身份验证
+     */
+    function updateUniswapSlippage(uint256 tolerance) external onlyGuardian {
+        _updateUniswapSlippage(tolerance);
+    }
+
+    function _updateUniswapSlippage(uint256 tolerance) internal {
+        // 验证新的滑点容忍度不超过最大限制（10%）
+        require(tolerance <= 1000, "Slippage tolerance cannot exceed 10%");
+
+        // 验证新的滑点容忍度与当前值不同
+        require(
+            tolerance != slippageTolerance(),
+            "New tolerance is the same as current tolerance"
+        );
+
+        super.setSlippageTolerance(tolerance); // 调用父类函数设置新滑点容忍度
+
+        // 发出事件，记录旧值和新值
+        emit SlippageToleranceUpdatedByGuardian(msg.sender, tolerance);
     }
 }

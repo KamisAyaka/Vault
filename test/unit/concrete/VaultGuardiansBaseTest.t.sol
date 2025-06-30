@@ -33,9 +33,20 @@ contract VaultGuardiansBaseTest is Base_Test {
     //////////////////////////////////////////////////////////////*/
     event GuardianAdded(address guardianAddress, IERC20 token);
     event GaurdianRemoved(address guardianAddress, IERC20 token);
-    event InvestedInGuardian(address guardianAddress, IERC20 token, uint256 amount);
-    event DinvestedFromGuardian(address guardianAddress, IERC20 token, uint256 amount);
-    event GuardianUpdatedHoldingAllocation(address guardianAddress, IERC20 token);
+    event InvestedInGuardian(
+        address guardianAddress,
+        IERC20 token,
+        uint256 amount
+    );
+    event DinvestedFromGuardian(
+        address guardianAddress,
+        IERC20 token,
+        uint256 amount
+    );
+    event GuardianUpdatedHoldingAllocation(
+        address guardianAddress,
+        IERC20 token
+    );
 
     function setUp() public override {
         Base_Test.setUp();
@@ -47,7 +58,7 @@ contract VaultGuardiansBaseTest is Base_Test {
         assert(block.chainid != 1);
     }
 
-    function testSetupAddsTokensAndPools() public {
+    function testSetupAddsTokensAndPools() public view {
         assertEq(vaultGuardians.isApprovedToken(usdcAddress), true);
         assertEq(vaultGuardians.isApprovedToken(linkAddress), true);
         assertEq(vaultGuardians.isApprovedToken(wethAddress), true);
@@ -67,7 +78,12 @@ contract VaultGuardiansBaseTest is Base_Test {
         address wethVault = vaultGuardians.becomeGuardian(allocationData);
         vm.stopPrank();
 
-        assertEq(address(vaultGuardians.getVaultFromGuardianAndToken(guardian, weth)), wethVault);
+        assertEq(
+            address(
+                vaultGuardians.getVaultFromGuardianAndToken(guardian, weth)
+            ),
+            wethVault
+        );
     }
 
     function testBecomeGuardianMovesStakePrice() public {
@@ -80,7 +96,10 @@ contract VaultGuardiansBaseTest is Base_Test {
         vm.stopPrank();
 
         uint256 wethBalanceAfter = weth.balanceOf(address(guardian));
-        assertEq(wethBalanceBefore - wethBalanceAfter, vaultGuardians.getGuardianStakePrice());
+        assertEq(
+            wethBalanceBefore - wethBalanceAfter,
+            vaultGuardians.getGuardianStakePrice()
+        );
     }
 
     function testBecomeGuardianEmitsEvent() public {
@@ -100,7 +119,9 @@ contract VaultGuardiansBaseTest is Base_Test {
         usdc.approve(address(vaultGuardians), mintAmount);
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultGuardiansBase.VaultGuardiansBase__NotAGuardian.selector, guardian, address(weth)
+                VaultGuardiansBase.VaultGuardiansBase__NotAGuardian.selector,
+                guardian,
+                address(weth)
             )
         );
         vaultGuardians.becomeTokenGuardian(allocationData, usdc);
@@ -128,7 +149,11 @@ contract VaultGuardiansBaseTest is Base_Test {
     function testOnlyGuardianCanUpdateHoldingAllocation() public hasGuardian {
         vm.startPrank(user);
         vm.expectRevert(
-            abi.encodeWithSelector(VaultGuardiansBase.VaultGuardiansBase__NotAGuardian.selector, user, weth)
+            abi.encodeWithSelector(
+                VaultGuardiansBase.VaultGuardiansBase__NotAGuardian.selector,
+                user,
+                weth
+            )
         );
         vaultGuardians.updateHoldingAllocation(weth, newAllocationData);
         vm.stopPrank();
@@ -140,7 +165,12 @@ contract VaultGuardiansBaseTest is Base_Test {
         vaultGuardians.quitGuardian();
         vm.stopPrank();
 
-        assertEq(address(vaultGuardians.getVaultFromGuardianAndToken(guardian, weth)), address(0));
+        assertEq(
+            address(
+                vaultGuardians.getVaultFromGuardianAndToken(guardian, weth)
+            ),
+            address(0)
+        );
     }
 
     function testQuitGuardianEmitsEvent() public hasGuardian {
@@ -156,11 +186,19 @@ contract VaultGuardiansBaseTest is Base_Test {
         usdc.mint(mintAmount, guardian);
         vm.startPrank(guardian);
         usdc.approve(address(vaultGuardians), mintAmount);
-        address tokenVault = vaultGuardians.becomeTokenGuardian(allocationData, usdc);
+        address tokenVault = vaultGuardians.becomeTokenGuardian(
+            allocationData,
+            usdc
+        );
         usdcVaultShares = VaultShares(tokenVault);
         vm.stopPrank();
 
-        assertEq(address(vaultGuardians.getVaultFromGuardianAndToken(guardian, usdc)), tokenVault);
+        assertEq(
+            address(
+                vaultGuardians.getVaultFromGuardianAndToken(guardian, usdc)
+            ),
+            tokenVault
+        );
     }
 
     function testBecomeTokenGuardianOnlyApprovedTokens() public hasGuardian {
@@ -170,7 +208,12 @@ contract VaultGuardiansBaseTest is Base_Test {
         mockToken.approve(address(vaultGuardians), mintAmount);
 
         vm.expectRevert(
-            abi.encodeWithSelector(VaultGuardiansBase.VaultGuardiansBase__NotApprovedToken.selector, address(mockToken))
+            abi.encodeWithSelector(
+                VaultGuardiansBase
+                    .VaultGuardiansBase__NotApprovedToken
+                    .selector,
+                address(mockToken)
+            )
         );
         vaultGuardians.becomeTokenGuardian(allocationData, mockToken);
         vm.stopPrank();
@@ -180,15 +223,24 @@ contract VaultGuardiansBaseTest is Base_Test {
         usdc.mint(mintAmount, guardian);
         vm.startPrank(guardian);
         usdc.approve(address(vaultGuardians), mintAmount);
-        address tokenVault = vaultGuardians.becomeTokenGuardian(allocationData, usdc);
+        address tokenVault = vaultGuardians.becomeTokenGuardian(
+            allocationData,
+            usdc
+        );
         usdcVaultShares = VaultShares(tokenVault);
         vm.stopPrank();
 
         assertEq(usdcVaultShares.name(), vaultGuardians.TOKEN_ONE_VAULT_NAME());
-        assertEq(usdcVaultShares.symbol(), vaultGuardians.TOKEN_ONE_VAULT_SYMBOL());
+        assertEq(
+            usdcVaultShares.symbol(),
+            vaultGuardians.TOKEN_ONE_VAULT_SYMBOL()
+        );
     }
 
-    function testBecomeTokenGuardianTokenTwoNameEmitsEvent() public hasGuardian {
+    function testBecomeTokenGuardianTokenTwoNameEmitsEvent()
+        public
+        hasGuardian
+    {
         link.mint(mintAmount, guardian);
         vm.startPrank(guardian);
         link.approve(address(vaultGuardians), mintAmount);
@@ -203,17 +255,28 @@ contract VaultGuardiansBaseTest is Base_Test {
         usdc.mint(mintAmount, guardian);
         vm.startPrank(guardian);
         usdc.approve(address(vaultGuardians), mintAmount);
-        address tokenVault = vaultGuardians.becomeTokenGuardian(allocationData, usdc);
+        address tokenVault = vaultGuardians.becomeTokenGuardian(
+            allocationData,
+            usdc
+        );
         usdcVaultShares = VaultShares(tokenVault);
         vm.stopPrank();
         _;
     }
 
-    function testCantQuitWethGuardianWithTokens() public hasGuardian hasTokenGuardian {
+    function testCantQuitWethGuardianWithTokens()
+        public
+        hasGuardian
+        hasTokenGuardian
+    {
         vm.startPrank(guardian);
         usdcVaultShares.approve(address(vaultGuardians), mintAmount);
         vm.expectRevert(
-            abi.encodeWithSelector(VaultGuardiansBase.VaultGuardiansBase__CantQuitWethWithThisFunction.selector)
+            abi.encodeWithSelector(
+                VaultGuardiansBase
+                    .VaultGuardiansBase__CantQuitWethWithThisFunction
+                    .selector
+            )
         );
         vaultGuardians.quitGuardian(weth);
         vm.stopPrank();
@@ -223,17 +286,29 @@ contract VaultGuardiansBaseTest is Base_Test {
         vm.startPrank(guardian);
         wethVaultShares.approve(address(vaultGuardians), mintAmount);
         vm.expectRevert(
-            abi.encodeWithSelector(VaultGuardiansBase.VaultGuardiansBase__CantQuitWethWithThisFunction.selector)
+            abi.encodeWithSelector(
+                VaultGuardiansBase
+                    .VaultGuardiansBase__CantQuitWethWithThisFunction
+                    .selector
+            )
         );
         vaultGuardians.quitGuardian(weth);
         vm.stopPrank();
     }
 
-    function testCantQuitWethWithOtherTokens() public hasGuardian hasTokenGuardian {
+    function testCantQuitWethWithOtherTokens()
+        public
+        hasGuardian
+        hasTokenGuardian
+    {
         vm.startPrank(guardian);
         usdcVaultShares.approve(address(vaultGuardians), mintAmount);
         vm.expectRevert(
-            abi.encodeWithSelector(VaultGuardiansBase.VaultGuardiansBase__CantQuitWethWithThisFunction.selector)
+            abi.encodeWithSelector(
+                VaultGuardiansBase
+                    .VaultGuardiansBase__CantQuitWethWithThisFunction
+                    .selector
+            )
         );
         vaultGuardians.quitGuardian();
         vm.stopPrank();
@@ -244,11 +319,21 @@ contract VaultGuardiansBaseTest is Base_Test {
     //////////////////////////////////////////////////////////////*/
 
     function testGetVault() public hasGuardian hasTokenGuardian {
-        assertEq(address(vaultGuardians.getVaultFromGuardianAndToken(guardian, weth)), address(wethVaultShares));
-        assertEq(address(vaultGuardians.getVaultFromGuardianAndToken(guardian, usdc)), address(usdcVaultShares));
+        assertEq(
+            address(
+                vaultGuardians.getVaultFromGuardianAndToken(guardian, weth)
+            ),
+            address(wethVaultShares)
+        );
+        assertEq(
+            address(
+                vaultGuardians.getVaultFromGuardianAndToken(guardian, usdc)
+            ),
+            address(usdcVaultShares)
+        );
     }
 
-    function testIsApprovedToken() public {
+    function testIsApprovedToken() public view {
         assertEq(vaultGuardians.isApprovedToken(usdcAddress), true);
         assertEq(vaultGuardians.isApprovedToken(linkAddress), true);
         assertEq(vaultGuardians.isApprovedToken(wethAddress), true);
@@ -259,19 +344,19 @@ contract VaultGuardiansBaseTest is Base_Test {
         assertEq(vaultGuardians.isApprovedToken(address(mock)), false);
     }
 
-    function testGetAavePool() public {
+    function testGetAavePool() public view {
         assertEq(vaultGuardians.getAavePool(), aavePool);
     }
 
-    function testGetUniswapV2Router() public {
+    function testGetUniswapV2Router() public view {
         assertEq(vaultGuardians.getUniswapV2Router(), uniswapRouter);
     }
 
-    function testGetGuardianStakePrice() public {
+    function testGetGuardianStakePrice() public view {
         assertEq(vaultGuardians.getGuardianStakePrice(), stakePrice);
     }
 
-    function testGetGuardianDaoAndCut() public {
+    function testGetGuardianDaoAndCut() public view {
         assertEq(vaultGuardians.getGuardianAndDaoCut(), guardianAndDaoCut);
     }
 }

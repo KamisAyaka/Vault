@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.20;
+pragma solidity ^0.8.20;
 
 import {IUniswapV2Pair} from "../../vendor/IUniswapV2Pair.sol";
 import {IUniswapV2Router01} from "../../vendor/IUniswapV2Router01.sol";
 import {IUniswapV2Factory} from "../../vendor/IUniswapV2Factory.sol";
 import {AStaticUSDCData, IERC20} from "../../abstract/AStaticUSDCData.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-contract UniswapAdapter is AStaticUSDCData, Ownable {
+contract UniswapAdapter is AStaticUSDCData {
     error UniswapAdapter__TransferFailed();
-    error UniswapAdapter__OnlyOwner();
 
     using SafeERC20 for IERC20;
 
@@ -32,7 +30,7 @@ contract UniswapAdapter is AStaticUSDCData, Ownable {
         address uniswapRouter,
         address weth,
         address tokenOne
-    ) AStaticUSDCData(weth, tokenOne) Ownable(msg.sender) {
+    ) AStaticUSDCData(weth, tokenOne) {
         i_uniswapRouter = IUniswapV2Router01(uniswapRouter);
         i_uniswapFactory = IUniswapV2Factory(
             IUniswapV2Router01(i_uniswapRouter).factory()
@@ -55,47 +53,37 @@ contract UniswapAdapter is AStaticUSDCData, Ownable {
         // 我们将一半用于WETH，一半用于该代币
         uint256 amountOfTokenToSwap = amount / 2;
 
-        // 路径数组传递给Uniswap路由器，允许创建交换路径
-        // 当输入代币和输出代币的池不存在时也适用
-        // 但在本例中，我们确定WETH、USDC和LINK的所有组合都存在交易对
-        // 索引0是输入代币地址
-        // 索引1是输出代币地址
-        s_pathArray = [address(token), address(counterPartyToken)];
+        // 动态生成路径数组
+        address[] memory path = new address[](2);
+        path[0] = address(token);
+        path[1] = address(counterPartyToken);
+
         // 计算最小输出量
         uint256[] memory expectedAmounts = i_uniswapRouter.getAmountsOut(
             amountOfTokenToSwap,
-            s_pathArray
+            path
         );
         uint256 minAmountOut = (expectedAmounts[1] *
             (10000 - s_slippageTolerance)) / 10000;
-        bool succ = token.approve(
-            address(i_uniswapRouter),
-            amountOfTokenToSwap
-        );
-        if (!succ) {
-            revert UniswapAdapter__TransferFailed();
-        }
+
+        // 执行代币交换
+        token.approve(address(i_uniswapRouter), amountOfTokenToSwap);
         uint256[] memory amounts = i_uniswapRouter.swapExactTokensForTokens({
             amountIn: amountOfTokenToSwap,
             amountOutMin: minAmountOut, // 动态计算的最小输出
-            path: s_pathArray,
+            path: path,
             to: address(this),
             deadline: block.timestamp + 300 // 5分钟有效期
         });
 
-        succ = counterPartyToken.approve(address(i_uniswapRouter), amounts[1]);
-        if (!succ) {
-            revert UniswapAdapter__TransferFailed();
-        }
-        succ = token.approve(
+        // 批准流动性添加
+        counterPartyToken.approve(address(i_uniswapRouter), amounts[1]);
+        token.approve(
             address(i_uniswapRouter),
             amountOfTokenToSwap + amounts[0]
         );
-        if (!succ) {
-            revert UniswapAdapter__TransferFailed();
-        }
 
-        // amounts[1]应为获得的WETH数量
+        // 添加流动性
         (
             uint256 tokenAmount,
             uint256 counterPartyTokenAmount,
@@ -112,6 +100,7 @@ contract UniswapAdapter is AStaticUSDCData, Ownable {
                 to: address(this),
                 deadline: block.timestamp + 300
             });
+
         emit UniswapInvested(tokenAmount, counterPartyTokenAmount, liquidity);
     }
 
@@ -124,79 +113,79 @@ contract UniswapAdapter is AStaticUSDCData, Ownable {
     function _uniswapDivest(
         IERC20 token,
         uint256 liquidityAmount
-    ) internal returns (uint256 amountOfAssetReturned) {
+    ) internal returns (uint256) {
         IERC20 counterPartyToken = token == i_weth ? i_tokenOne : i_weth;
-        // 获取交易对地址
         address pairAddress = i_uniswapFactory.getPair(
             address(token),
             address(counterPartyToken)
         );
-
         IUniswapV2Pair pair = IUniswapV2Pair(pairAddress);
 
-        // 获取储备量和总供应量
         (uint112 reserve0, uint112 reserve1, ) = pair.getReserves();
         uint256 totalSupply = pair.totalSupply();
 
-        // 确定代币顺序
-        address token0 = pair.token0();
-        uint256 expectedTokenAmount;
-        uint256 expectedCounterPartyAmount;
+        // 计算滑点保护值
+        (uint256 minToken, uint256 minCounter) = _calculateMinAmounts(
+            token,
+            pair,
+            reserve0,
+            reserve1,
+            totalSupply,
+            liquidityAmount
+        );
 
-        if (address(token) == token0) {
-            expectedTokenAmount = (reserve0 * liquidityAmount) / totalSupply;
-            expectedCounterPartyAmount =
-                (reserve1 * liquidityAmount) /
-                totalSupply;
-        } else {
-            expectedTokenAmount = (reserve1 * liquidityAmount) / totalSupply;
-            expectedCounterPartyAmount =
-                (reserve0 * liquidityAmount) /
-                totalSupply;
-        }
-
-        // 计算最小接受量（考虑滑点）
-        uint256 minTokenAmount = (expectedTokenAmount *
-            (10000 - s_slippageTolerance)) / 10000;
-        uint256 minCounterPartyAmount = (expectedCounterPartyAmount *
-            (10000 - s_slippageTolerance)) / 10000;
-
-        (uint256 tokenAmount, uint256 counterPartyTokenAmount) = i_uniswapRouter
+        // 执行流动性移除
+        (uint256 tokenAmount, uint256 counterPartyAmount) = i_uniswapRouter
             .removeLiquidity({
                 tokenA: address(token),
                 tokenB: address(counterPartyToken),
                 liquidity: liquidityAmount,
-                amountAMin: minTokenAmount,
-                amountBMin: minCounterPartyAmount,
+                amountAMin: minToken,
+                amountBMin: minCounter,
                 to: address(this),
                 deadline: block.timestamp + 300
             });
 
-        s_pathArray = [address(counterPartyToken), address(token)];
-        // 计算最小输出量
-        uint256[] memory expectedAmounts = i_uniswapRouter.getAmountsOut(
-            counterPartyTokenAmount,
-            s_pathArray
+        return
+            address(token) == pair.token0() ? tokenAmount : counterPartyAmount;
+    }
+
+    // 分离最小金额计算逻辑
+    function _calculateMinAmounts(
+        IERC20 token,
+        IUniswapV2Pair pair,
+        uint112 reserve0,
+        uint112 reserve1,
+        uint256 totalSupply,
+        uint256 liquidityAmount
+    ) private view returns (uint256, uint256) {
+        uint256 slippage = s_slippageTolerance;
+        if (address(token) == pair.token0()) {
+            return (
+                (((uint256(reserve0) * liquidityAmount) / totalSupply) *
+                    (10000 - slippage)) / 10000,
+                (((uint256(reserve1) * liquidityAmount) / totalSupply) *
+                    (10000 - slippage)) / 10000
+            );
+        }
+        return (
+            (((uint256(reserve1) * liquidityAmount) / totalSupply) *
+                (10000 - slippage)) / 10000,
+            (((uint256(reserve0) * liquidityAmount) / totalSupply) *
+                (10000 - slippage)) / 10000
         );
-        uint256 minAmountOut = (expectedAmounts[1] *
-            (10000 - s_slippageTolerance)) / 10000;
-        uint256[] memory amounts = i_uniswapRouter.swapExactTokensForTokens({
-            amountIn: counterPartyTokenAmount,
-            amountOutMin: minAmountOut,
-            path: s_pathArray,
-            to: address(this),
-            deadline: block.timestamp + 300
-        });
-        emit UniswapDivested(tokenAmount, amounts[1]);
-        amountOfAssetReturned = amounts[1];
     }
 
     // slither-disable-end reentrancy-benign
     // slither-disable-end reentrancy-events
     // slither-disable-end reentrancy-eth
 
-    function setSlippageTolerance(uint256 tolerance) external onlyOwner {
+    function setSlippageTolerance(uint256 tolerance) internal {
         s_slippageTolerance = tolerance;
         emit SlippageToleranceUpdated(tolerance);
+    }
+
+    function slippageTolerance() public view returns (uint256) {
+        return s_slippageTolerance;
     }
 }

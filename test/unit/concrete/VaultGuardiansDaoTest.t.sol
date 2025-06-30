@@ -12,7 +12,7 @@ contract VaultGuardiansDaoTest is Base_Test {
         Base_Test.setUp();
     }
 
-    function testDaoSetupIsCorrect() public {
+    function testDaoSetupIsCorrect() public view {
         assertEq(vaultGuardianToken.balanceOf(msg.sender), 0);
         assertEq(vaultGuardianToken.owner(), address(vaultGuardians));
     }
