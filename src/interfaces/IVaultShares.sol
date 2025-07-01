@@ -10,12 +10,12 @@ interface IVaultShares is IERC4626, IVaultData {
         IERC20 asset;
         string vaultName;
         string vaultSymbol;
-        address guardian;
+        address operatorGuardian;
         AllocationData allocationData;
         address aavePool;
         address uniswapRouter;
         uint256 guardianAndDaoCut;
-        address vaultGuardians;
+        address governanceGuardian;
         address weth;
         address usdc;
     }

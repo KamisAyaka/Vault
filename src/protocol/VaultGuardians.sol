@@ -9,7 +9,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
  * @author Vault Guardian
  * @notice 本合约是 Vault Guardian 系统的入口合约
  * @notice 包含 DAO 拥有的所有控制功能
- * @notice VaultGuardiansBase 包含用户和守护者的所有功能
+ * @notice VaultGuardiansBase 包含用户和操作管理者的所有功能
  */
 contract VaultGuardians is Ownable, VaultGuardiansBase {
     using SafeERC20 for IERC20;
@@ -27,7 +27,7 @@ contract VaultGuardians is Ownable, VaultGuardiansBase {
         uint256 oldStakePrice,
         uint256 newStakePrice
     );
-    /// @notice 守护者手续费更新事件
+    /// @notice 操作管理者手续费更新事件
     /// @param oldFee 旧手续费
     /// @param newFee 新手续费
     event VaultGuardians__UpdatedFee(uint256 oldFee, uint256 newFee);
@@ -60,7 +60,7 @@ contract VaultGuardians is Ownable, VaultGuardiansBase {
     /*//////////////////////////////////////////////////////////////
                                外部函数
     //////////////////////////////////////////////////////////////*/
-    /// @notice 更新守护者的质押价格
+    /// @notice 更新守护者的质押价格（现为操作管理者）
     /// @param newStakePrice 新的质押价格（以 wei 为单位）
     function updateGuardianStakePrice(
         uint256 newStakePrice
@@ -72,7 +72,7 @@ contract VaultGuardians is Ownable, VaultGuardiansBase {
         );
     }
 
-    /// @notice 更新新金库中守护者和 DAO 获取的份额比例
+    /// @notice 更新新金库中操作管理者和 DAO 获取的份额比例
     /// @param newCut 新的比例值
     /// @dev 该值将在用户存入金库时除以份额总数
     /// @dev 历史金库不会更新比例，仅影响后续新创建的金库

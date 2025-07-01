@@ -10,7 +10,7 @@ import {VaultGuardianToken} from "../dao/VaultGuardianToken.sol";
 /**
  * @title VaultGuardiansBase
  * @author Vault Guardian
- * @notice 基础合约，包含用户或守护者与协议交互的所有核心功能
+ * @notice 基础合约，包含用户或操作管理者与协议交互的所有核心功能
  */
 contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     using SafeERC20 for IERC20;
@@ -20,11 +20,11 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
         uint256 amount,
         uint256 amountNeeded
     );
-    error VaultGuardiansBase__NotAGuardian(
+    error VaultGuardiansBase__NotAnOperatorGuardian(
         address guardianAddress,
         IERC20 token
     );
-    error VaultGuardiansBase__CantQuitGuardianWithNonWethVaults(
+    error VaultGuardiansBase__CantQuitOperatorGuardianWithNonWethVaults(
         address guardianAddress
     );
     error VaultGuardiansBase__CantQuitWethWithThisFunction();
@@ -73,10 +73,10 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     /*//////////////////////////////////////////////////////////////
                                修饰符
     //////////////////////////////////////////////////////////////*/
-    /// @dev 仅当调用者是特定代币的守护者时通过
+    /// @dev 仅当调用者是特定代币的操作管理者时通过
     modifier onlyGuardian(IERC20 token) {
         if (address(s_guardians[msg.sender][token]) == address(0)) {
-            revert VaultGuardiansBase__NotAGuardian(msg.sender, token);
+            revert VaultGuardiansBase__NotAnOperatorGuardian(msg.sender, token);
         }
         _;
     }
@@ -118,12 +118,12 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
                 asset: i_weth,
                 vaultName: WETH_VAULT_NAME,
                 vaultSymbol: WETH_VAULT_SYMBOL,
-                guardian: msg.sender,
+                operatorGuardian: msg.sender,
                 allocationData: wethAllocationData,
                 aavePool: i_aavePool,
                 uniswapRouter: i_uniswapV2Router,
                 guardianAndDaoCut: s_guardianAndDaoCut,
-                vaultGuardians: address(this),
+                governanceGuardian: address(this),
                 weth: address(i_weth),
                 usdc: address(i_tokenOne)
             })
@@ -132,10 +132,10 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     }
 
     /**
-     * @notice 成为非WETH代币的守护者
-     * @notice 只有WETH守护者才能成为其他代币的守护者
+     * @notice 成为非WETH代币的操作管理者
+     * @notice 只有WETH操作管理者才能成为其他代币的操作管理者
      * @param allocationData 金库资产分配策略
-     * @param token 需要守护的目标代币
+     * @param token 需要管理的目标代币
      */
     function becomeTokenGuardian(
         AllocationData memory allocationData,
@@ -149,12 +149,12 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
                     asset: token,
                     vaultName: TOKEN_ONE_VAULT_NAME,
                     vaultSymbol: TOKEN_ONE_VAULT_SYMBOL,
-                    guardian: msg.sender,
+                    operatorGuardian: msg.sender,
                     allocationData: allocationData,
                     aavePool: i_aavePool,
                     uniswapRouter: i_uniswapV2Router,
                     guardianAndDaoCut: s_guardianAndDaoCut,
-                    vaultGuardians: address(this),
+                    governanceGuardian: address(this),
                     weth: address(i_weth),
                     usdc: address(i_tokenOne)
                 })
@@ -165,12 +165,12 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
                     asset: token,
                     vaultName: TOKEN_TWO_VAULT_NAME, // 修复：使用正确的tokenTwo名称参数
                     vaultSymbol: TOKEN_TWO_VAULT_SYMBOL, // 修复：使用正确的tokenTwo符号参数
-                    guardian: msg.sender,
+                    operatorGuardian: msg.sender,
                     allocationData: allocationData,
                     aavePool: i_aavePool,
                     uniswapRouter: i_uniswapV2Router,
                     guardianAndDaoCut: s_guardianAndDaoCut,
-                    vaultGuardians: address(this),
+                    governanceGuardian: address(this),
                     weth: address(i_weth),
                     usdc: address(i_tokenOne)
                 })
@@ -257,9 +257,9 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
 
     // slither-disable-start reentrancy-eth
     /**
-     * @notice 成为代币守护者的内部实现
+     * @notice 成为代币操作管理者的内部实现
      * @notice 铸造治理代币作为质押奖励
-     * @param token 被守护的代币
+     * @param token 被管理的代币
      * @param tokenVault 对应的金库合约
      */
     function _becomeTokenGuardian(
