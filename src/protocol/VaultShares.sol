@@ -28,6 +28,10 @@ contract VaultShares is
     error VaultShares__DepositMoreThanMax(uint256 amount, uint256 max);
     error VaultShares__NotGovernanceGuardianContract();
     error VaultShares__AllocationNot100Percent(uint256 totalAllocation);
+    error VaultShares__InsufficientLiquidity(
+        uint256 currentLiquidity,
+        uint256 requiredLiquidity
+    );
     error VaultShares__NotActive();
 
     /*//////////////////////////////////////////////////////////////
@@ -46,6 +50,7 @@ contract VaultShares is
     AllocationData private s_allocationData;
 
     uint256 private constant ALLOCATION_PRECISION = 1_000;
+    uint256 private constant MIN_HOLD_ALLOCATION_PERCENT = 100;
 
     /*//////////////////////////////////////////////////////////////
                                  事件
@@ -144,8 +149,18 @@ contract VaultShares is
         uint256 totalAllocation = tokenAllocationData.holdAllocation +
             tokenAllocationData.uniswapAllocation +
             tokenAllocationData.aaveAllocation;
+
+        // 验证总分配不超过100%
         if (totalAllocation != ALLOCATION_PRECISION) {
             revert VaultShares__AllocationNot100Percent(totalAllocation);
+        }
+
+        // 验证基础流动性不低于10%
+        if (tokenAllocationData.holdAllocation < MIN_HOLD_ALLOCATION_PERCENT) {
+            revert VaultShares__InsufficientLiquidity(
+                tokenAllocationData.holdAllocation,
+                MIN_HOLD_ALLOCATION_PERCENT
+            );
         }
         s_allocationData = tokenAllocationData;
         emit UpdatedAllocation(tokenAllocationData);
@@ -293,20 +308,15 @@ contract VaultShares is
         (uint112 reserve0, uint112 reserve1, ) = pair.getReserves();
         uint256 totalSupply = pair.totalSupply();
 
-        // 1. 计算LP代币对应的两种资产数量
+        // 计算LP代币对应的两种资产数量
         uint256 amount0 = (uint256(reserve0) * liquidityTokens) / totalSupply;
         uint256 amount1 = (uint256(reserve1) * liquidityTokens) / totalSupply;
 
-        // 2. 将配对资产转换为底层资产计价
+        // 返回正确的底层资产价值
         if (asset() == pair.token0()) {
-            // amount0已是底层资产，将amount1(WETH)转换为底层资产
-            // 价格 = reserve0/reserve1 表示1个WETH可兑换的底层资产数量
-            uint256 amount1InUnderlying = (amount1 * reserve0) / reserve1;
-            return amount0 + amount1InUnderlying;
+            return amount0 + (amount1 * reserve0) / reserve1; // 将amount1(WETH)转换为底层资产
         } else if (asset() == pair.token1()) {
-            // amount1已是底层资产，将amount0(WETH)转换为底层资产
-            uint256 amount0InUnderlying = (amount0 * reserve1) / reserve0;
-            return amount1 + amount0InUnderlying;
+            return amount1 + (amount0 * reserve1) / reserve0; // 将amount0(USDC)转换为底层资产
         } else {
             revert("Invalid asset pair");
         }
