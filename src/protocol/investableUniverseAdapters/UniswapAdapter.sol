@@ -4,10 +4,10 @@ pragma solidity ^0.8.20;
 import {IUniswapV2Pair} from "../../vendor/IUniswapV2Pair.sol";
 import {IUniswapV2Router01} from "../../vendor/IUniswapV2Router01.sol";
 import {IUniswapV2Factory} from "../../vendor/IUniswapV2Factory.sol";
-import {AStaticUSDCData, IERC20} from "../../abstract/AStaticUSDCData.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-contract UniswapAdapter is AStaticUSDCData {
+contract UniswapAdapter {
     error UniswapAdapter__TransferFailed();
 
     using SafeERC20 for IERC20;
@@ -20,17 +20,13 @@ contract UniswapAdapter is AStaticUSDCData {
 
     event UniswapInvested(
         uint256 tokenAmount,
-        uint256 wethAmount,
+        uint256 counterPartyTokenAmount,
         uint256 liquidity
     );
-    event UniswapDivested(uint256 tokenAmount, uint256 wethAmount);
+    event UniswapDivested(uint256 tokenAmount, uint256 counterPartyTokenAmount);
     event SlippageToleranceUpdated(uint256 tolerance);
 
-    constructor(
-        address uniswapRouter,
-        address weth,
-        address tokenOne
-    ) AStaticUSDCData(weth, tokenOne) {
+    constructor(address uniswapRouter) {
         i_uniswapRouter = IUniswapV2Router01(uniswapRouter);
         i_uniswapFactory = IUniswapV2Factory(
             IUniswapV2Router01(i_uniswapRouter).factory()
@@ -48,9 +44,11 @@ contract UniswapAdapter is AStaticUSDCData {
      * @param token 金库的底层资产代币
      * @param amount 用于投资的资产数量
      */
-    function _uniswapInvest(IERC20 token, uint256 amount) internal {
-        IERC20 counterPartyToken = token == i_weth ? i_tokenOne : i_weth;
-        // 我们将一半用于WETH，一半用于该代币
+    function _uniswapInvest(
+        IERC20 token,
+        IERC20 counterPartyToken,
+        uint256 amount
+    ) internal {
         uint256 amountOfTokenToSwap = amount / 2;
 
         // 动态生成路径数组
@@ -112,9 +110,9 @@ contract UniswapAdapter is AStaticUSDCData {
      */
     function _uniswapDivest(
         IERC20 token,
+        IERC20 counterPartyToken,
         uint256 liquidityAmount
     ) internal returns (uint256) {
-        IERC20 counterPartyToken = token == i_weth ? i_tokenOne : i_weth;
         address pairAddress = i_uniswapFactory.getPair(
             address(token),
             address(counterPartyToken)

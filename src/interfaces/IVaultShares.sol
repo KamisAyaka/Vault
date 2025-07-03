@@ -8,6 +8,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 interface IVaultShares is IERC4626, IVaultData {
     struct ConstructorData {
         IERC20 asset;
+        IERC20 counterPartyToken;
+        IERC20 weth;
         string vaultName;
         string vaultSymbol;
         address operatorGuardian;
@@ -16,13 +18,13 @@ interface IVaultShares is IERC4626, IVaultData {
         address uniswapRouter;
         uint256 guardianAndDaoCut;
         address governanceGuardian;
-        address weth;
-        address usdc;
     }
 
     function updateHoldingAllocation(
         AllocationData memory tokenAllocationData
     ) external;
+
+    function updateUniswapSlippage(uint256 tolerance) external;
 
     function setNotActive() external;
 }

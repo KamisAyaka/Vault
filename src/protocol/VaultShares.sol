@@ -8,6 +8,7 @@ import {UniswapAdapter} from "./investableUniverseAdapters/UniswapAdapter.sol";
 import {DataTypes} from "../vendor/DataTypes.sol";
 import {IUniswapV2Pair} from "../vendor/IUniswapV2Pair.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {VaultGuardians} from "./VaultGuardians.sol";
 
 /**
  * @title VaultShares
@@ -25,10 +26,6 @@ contract VaultShares is
 {
     // 错误定义
     error VaultShares__DepositMoreThanMax(uint256 amount, uint256 max);
-    error VaultShares__NotOperatorGuardian(
-        address sender,
-        address operatorGuardian
-    );
     error VaultShares__NotGovernanceGuardianContract();
     error VaultShares__AllocationNot100Percent(uint256 totalAllocation);
     error VaultShares__NotActive();
@@ -38,6 +35,9 @@ contract VaultShares is
     //////////////////////////////////////////////////////////////*/
     IERC20 internal immutable i_uniswapLiquidityToken;
     IERC20 internal immutable i_aaveAToken;
+    IERC20 internal immutable i_counterPartyToken;
+    IERC20 internal immutable i_weth;
+
     address private immutable i_operatorGuardian; // 操作管理者地址
     address private immutable i_governanceGuardian; // 治理守护者协议地址
     uint256 private immutable i_guardianAndDaoCut;
@@ -54,27 +54,9 @@ contract VaultShares is
     event NoLongerActive();
     event FundsInvested();
 
-    /// @notice 操作管理者更新Uniswap滑点容忍度事件
-    event SlippageToleranceUpdatedByOperatorGuardian(
-        address indexed operatorGuardian, // 更新滑点容忍度的操作管理者地址
-        uint256 tolerance // 新的滑点容忍度（以万分之一为单位）
-    );
-
     /*//////////////////////////////////////////////////////////////
                                修饰符
     //////////////////////////////////////////////////////////////*/
-
-    /// @dev 仅守护者可调用
-    /// @dev 仅操作管理者可调用
-    modifier onlyOperatorGuardian() {
-        if (msg.sender != i_operatorGuardian) {
-            revert VaultShares__NotOperatorGuardian(
-                msg.sender,
-                i_operatorGuardian
-            );
-        }
-        _;
-    }
 
     /// @dev 仅治理守护者协议可调用
     modifier onlyGovernanceGuardian() {
@@ -116,15 +98,13 @@ contract VaultShares is
         ERC4626(constructorData.asset)
         ERC20(constructorData.vaultName, constructorData.vaultSymbol)
         AaveAdapter(constructorData.aavePool)
-        UniswapAdapter(
-            constructorData.uniswapRouter,
-            constructorData.weth,
-            constructorData.usdc
-        )
+        UniswapAdapter(constructorData.uniswapRouter)
     {
         i_operatorGuardian = constructorData.operatorGuardian; // 初始化操作管理者
         i_guardianAndDaoCut = constructorData.guardianAndDaoCut;
         i_governanceGuardian = constructorData.governanceGuardian; // 初始化治理守护者协议
+        i_counterPartyToken = constructorData.counterPartyToken;
+        i_weth = constructorData.weth; // 设置WETH引用
         s_isActive = true;
         updateHoldingAllocation(constructorData.allocationData);
 
@@ -137,7 +117,7 @@ contract VaultShares is
         i_uniswapLiquidityToken = IERC20(
             i_uniswapFactory.getPair(
                 address(constructorData.asset),
-                address(i_weth)
+                address(constructorData.counterPartyToken)
             )
         );
     }
@@ -155,7 +135,7 @@ contract VaultShares is
     }
 
     /**
-     * @notice 更新投资分配比例（由守护者调用）
+     * @notice 更新投资分配比例
      * @param tokenAllocationData 新的分配数据
      */
     function updateHoldingAllocation(
@@ -195,6 +175,7 @@ contract VaultShares is
     /**
      * @dev 覆盖 Openzeppelin 的 deposit 实现
      * @dev 向 DAO 和 守护者铸造管理费份额
+     * @dev 增加WETH存款的VGT铸造逻辑
      */
     function deposit(
         uint256 assets,
@@ -216,11 +197,59 @@ contract VaultShares is
         uint256 shares = previewDeposit(assets);
         _deposit(_msgSender(), receiver, assets, shares);
 
+        // 铸造VGT治理代币（仅限WETH存款）
+        if (address(i_weth) == address(asset())) {
+            VaultGuardians(i_governanceGuardian).mintVGT(receiver, assets);
+        }
+
         _mint(i_operatorGuardian, shares / i_guardianAndDaoCut);
         _mint(i_governanceGuardian, shares / i_guardianAndDaoCut);
 
         _investFunds(assets);
         return shares;
+    }
+
+    /**
+     * @notice 用户赎回资产时销毁对应VGT治理代币
+     * @dev 覆盖标准redeem实现
+     */
+    function redeem(
+        uint256 shares,
+        address receiver,
+        address owner
+    ) public override(IERC4626, ERC4626) nonReentrant returns (uint256 assets) {
+        uint256 maxShares = maxRedeem(owner);
+        if (shares > maxShares) {
+            revert ERC4626ExceededMaxRedeem(owner, shares, maxShares);
+        }
+
+        assets = previewRedeem(shares);
+        _withdraw(_msgSender(), receiver, owner, assets, shares);
+
+        // 销毁VGT治理代币（仅限WETH金库）
+        if (address(i_weth) == address(asset())) {
+            VaultGuardians(i_governanceGuardian).burnVGT(receiver, assets);
+        }
+    }
+
+    /**
+     * @notice 守护者更新Uniswap滑点容忍度
+     * @param tolerance 新的滑点容忍值（以万分之一为单位）
+     * @dev 示例：200 = 2%
+     */
+    function updateUniswapSlippage(
+        uint256 tolerance
+    ) external onlyGovernanceGuardian {
+        // 验证新的滑点容忍度不超过最大限制（10%）
+        require(tolerance <= 1000, "Slippage tolerance cannot exceed 10%");
+
+        // 验证新的滑点容忍度与当前值不同
+        require(
+            tolerance != slippageTolerance(),
+            "New tolerance is the same as current tolerance"
+        );
+
+        super.setSlippageTolerance(tolerance); // 调用父类函数设置新滑点容忍度
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -237,7 +266,11 @@ contract VaultShares is
         uint256 uniswapAllocation = (assets *
             s_allocationData.uniswapAllocation) / ALLOCATION_PRECISION;
         if (uniswapAllocation > 0) {
-            _uniswapInvest(IERC20(asset()), uniswapAllocation);
+            _uniswapInvest(
+                IERC20(asset()),
+                IERC20(i_counterPartyToken),
+                uniswapAllocation
+            );
         }
 
         uint256 aaveAllocation = (assets * s_allocationData.aaveAllocation) /
@@ -264,17 +297,13 @@ contract VaultShares is
         uint256 amount0 = (uint256(reserve0) * liquidityTokens) / totalSupply;
         uint256 amount1 = (uint256(reserve1) * liquidityTokens) / totalSupply;
 
-        address token0 = pair.token0();
-        address token1 = pair.token1();
-        address underlying = asset();
-
         // 2. 将配对资产转换为底层资产计价
-        if (underlying == token0) {
+        if (asset() == pair.token0()) {
             // amount0已是底层资产，将amount1(WETH)转换为底层资产
             // 价格 = reserve0/reserve1 表示1个WETH可兑换的底层资产数量
             uint256 amount1InUnderlying = (amount1 * reserve0) / reserve1;
             return amount0 + amount1InUnderlying;
-        } else if (underlying == token1) {
+        } else if (asset() == pair.token1()) {
             // amount1已是底层资产，将amount0(WETH)转换为底层资产
             uint256 amount0InUnderlying = (amount0 * reserve1) / reserve0;
             return amount1 + amount0InUnderlying;
@@ -288,7 +317,11 @@ contract VaultShares is
             address(this)
         );
         if (liquidityTokens > 0) {
-            _uniswapDivest(IERC20(asset()), liquidityTokens);
+            _uniswapDivest(
+                IERC20(asset()),
+                IERC20(i_counterPartyToken),
+                liquidityTokens
+            );
         }
 
         liquidityTokens = i_aaveAToken.balanceOf(address(this));
@@ -357,29 +390,5 @@ contract VaultShares is
      */
     function getAllocationData() external view returns (AllocationData memory) {
         return s_allocationData;
-    }
-
-    /**
-     * @notice 守护者更新Uniswap滑点容忍度
-     * @param tolerance 新的滑点容忍值（以万分之一为单位）
-     * @dev 示例：200 = 2%
-     * @dev 需守护者身份验证
-     */
-    function updateUniswapSlippage(
-        uint256 tolerance
-    ) external onlyOperatorGuardian {
-        // 验证新的滑点容忍度不超过最大限制（10%）
-        require(tolerance <= 1000, "Slippage tolerance cannot exceed 10%");
-
-        // 验证新的滑点容忍度与当前值不同
-        require(
-            tolerance != slippageTolerance(),
-            "New tolerance is the same as current tolerance"
-        );
-
-        super.setSlippageTolerance(tolerance); // 调用父类函数设置新滑点容忍度
-
-        // 发出事件，记录旧值和新值
-        emit SlippageToleranceUpdatedByOperatorGuardian(msg.sender, tolerance);
     }
 }
