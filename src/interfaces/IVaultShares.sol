@@ -26,5 +26,7 @@ interface IVaultShares is IERC4626, IVaultData {
 
     function updateUniswapSlippage(uint256 tolerance) external;
 
+    function updateCounterPartyToken(IERC20 newCounterPartyToken) external;
+
     function setNotActive() external;
 }

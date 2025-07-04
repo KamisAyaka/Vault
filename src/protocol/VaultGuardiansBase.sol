@@ -77,6 +77,10 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
         IERC20 token,
         uint256 tolerance
     );
+    event CounterPartyTokenUpdated(
+        IERC20 oldCounterPartyToken,
+        IERC20 newCounterPartyToken
+    );
 
     /*//////////////////////////////////////////////////////////////
                                修饰符
@@ -250,6 +254,32 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
         s_guardians[msg.sender][token].updateUniswapSlippage(tolerance);
     }
 
+    /**
+     * @notice 更新金库的交易对
+     * @notice 新交易对必须是VaultGuardiansBase批准的代币
+     * @param token 要更新的管理代币
+     * @param newCounterPartyToken 新的交易对代币
+     */
+    function updateVaultCounterPartyToken(
+        IERC20 token,
+        IERC20 newCounterPartyToken
+    ) external onlyGuardian(token) {
+        // 验证新交易对代币是否已批准
+        if (
+            s_isApprovedToken[address(newCounterPartyToken)] &&
+            newCounterPartyToken != token
+        ) {
+            revert VaultGuardiansBase__NotApprovedToken(
+                address(newCounterPartyToken)
+            );
+        }
+
+        // 调用VaultShares的updateCounterPartyToken
+        s_guardians[msg.sender][token].updateCounterPartyToken(
+            newCounterPartyToken
+        );
+    }
+
     function mintVGT(address to, uint256 amount) external onlyETHVaultShares {
         i_vgToken.mint(to, amount);
     }
@@ -261,48 +291,6 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
     /*//////////////////////////////////////////////////////////////
                    私有函数
     //////////////////////////////////////////////////////////////*/
-    function _quitGuardian(IERC20 token) private returns (uint256) {
-        IVaultShares tokenVault = IVaultShares(s_guardians[msg.sender][token]);
-        s_guardians[msg.sender][token] = IVaultShares(address(0)); //将管理员的权限置为0,管理员无法再管理该金库
-        address vaultAddress = address(tokenVault);
-        // 移除金库有效性标记
-        if (s_validVaults[vaultAddress]) {
-            delete s_validVaults[vaultAddress];
-        }
-        if (s_guardianVaultCount[msg.sender] > 0) {
-            s_guardianVaultCount[msg.sender]--;
-        }
-        emit GaurdianRemoved(msg.sender, token);
-        tokenVault.setNotActive();
-        uint256 maxRedeemable = tokenVault.maxRedeem(msg.sender);
-        uint256 numberOfAssetsReturned = tokenVault.redeem(
-            maxRedeemable,
-            msg.sender,
-            msg.sender
-        );
-
-        // 仅销毁WETH相关的治理代币
-        if (address(token) == address(i_weth)) {
-            // 销毁数量等于质押金额
-            i_vgToken.burn(msg.sender, s_guardianStakePrice);
-        }
-
-        return numberOfAssetsReturned;
-    }
-
-    /**
-     * @notice 检查守护者是否持有非WETH金库
-     * @param guardian 需要验证的守护者地址
-     */
-    function _guardianHasNonWethVaults(
-        address guardian
-    ) private view returns (bool) {
-        return s_guardianVaultCount[guardian] > 1;
-    }
-
-    // slither-disable-start reentrancy-eth
-    // slither-disable-start reentrancy-benign
-    // slither-disable-start reentrancy-events
     /**
      * @notice 成为代币操作管理者的内部实现
      * @notice 铸造治理代币作为质押奖励
@@ -341,7 +329,44 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
         return address(tokenVault);
     }
 
-    // slither-disable-end reentrancy-eth
+    function _quitGuardian(IERC20 token) private returns (uint256) {
+        IVaultShares tokenVault = IVaultShares(s_guardians[msg.sender][token]);
+        s_guardians[msg.sender][token] = IVaultShares(address(0)); //将管理员的权限置为0,管理员无法再管理该金库
+        address vaultAddress = address(tokenVault);
+        // 移除金库有效性标记
+        if (s_validVaults[vaultAddress]) {
+            delete s_validVaults[vaultAddress];
+        }
+        if (s_guardianVaultCount[msg.sender] > 0) {
+            s_guardianVaultCount[msg.sender]--;
+        }
+        emit GaurdianRemoved(msg.sender, token);
+        tokenVault.setNotActive();
+        uint256 maxRedeemable = tokenVault.maxRedeem(msg.sender);
+        uint256 numberOfAssetsReturned = tokenVault.redeem(
+            maxRedeemable,
+            msg.sender,
+            msg.sender
+        );
+
+        // 仅销毁WETH相关的治理代币
+        if (address(token) == address(i_weth)) {
+            // 销毁数量等于质押金额
+            i_vgToken.burn(msg.sender, s_guardianStakePrice);
+        }
+
+        return numberOfAssetsReturned;
+    }
+
+    /**
+     * @notice 检查守护者是否持有非WETH金库
+     * @param guardian 需要验证的守护者地址
+     */
+    function _guardianHasNonWethVaults(
+        address guardian
+    ) private view returns (bool) {
+        return s_guardianVaultCount[guardian] > 1;
+    }
 
     /*//////////////////////////////////////////////////////////////
                    视图和纯函数

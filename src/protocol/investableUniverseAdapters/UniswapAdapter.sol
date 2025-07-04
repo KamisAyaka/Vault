@@ -56,46 +56,36 @@ contract UniswapAdapter {
         path[0] = address(token);
         path[1] = address(counterPartyToken);
 
-        // 计算最小输出量
-        uint256[] memory expectedAmounts = i_uniswapRouter.getAmountsOut(
+        // 执行兑换并获取实际兑换数量
+        uint256 actualTokenB = _swap(
+            path,
             amountOfTokenToSwap,
-            path
+            (i_uniswapRouter.getAmountsOut(amountOfTokenToSwap, path)[1] * 
+            (10000 - s_slippageTolerance)) / 10000
         );
-        uint256 minAmountOut = (expectedAmounts[1] *
-            (10000 - s_slippageTolerance)) / 10000;
 
-        // 执行兑换
-        uint256 actualAmountOut = _swap(
-            token,
-            counterPartyToken,
-            amountOfTokenToSwap,
-            minAmountOut
-        );
+        // 计算剩余tokenA数量
+        uint256 remainingTokenA = amount - amountOfTokenToSwap;
 
         // 批准流动性添加
-        counterPartyToken.approve(address(i_uniswapRouter), actualAmountOut);
-        token.approve(
-            address(i_uniswapRouter),
-            amountOfTokenToSwap
-        );
+        token.approve(address(i_uniswapRouter), remainingTokenA);
+        counterPartyToken.approve(address(i_uniswapRouter), actualTokenB);
 
-        // 添加流动性
+        // 添加流动性（使用实际兑换数量）
         (
             uint256 tokenAmount,
             uint256 counterPartyTokenAmount,
             uint256 liquidity
         ) = i_uniswapRouter.addLiquidity({
-                tokenA: address(token),
-                tokenB: address(counterPartyToken),
-                amountADesired: amountOfTokenToSwap + expectedAmounts[0],
-                amountBDesired: expectedAmounts[1],
-                amountAMin: ((amountOfTokenToSwap + expectedAmounts[0]) *
-                    (10000 - s_slippageTolerance)) / 10000, // 添加滑点保护
-                amountBMin: (expectedAmounts[1] * (10000 - s_slippageTolerance)) /
-                    10000, // 添加滑点保护
-                to: address(this),
-                deadline: block.timestamp + 300
-            });
+            tokenA: address(token),
+            tokenB: address(counterPartyToken),
+            amountADesired: remainingTokenA,
+            amountBDesired: actualTokenB,
+            amountAMin: (remainingTokenA * (10000 - s_slippageTolerance)) / 10000,
+            amountBMin: (actualTokenB * (10000 - s_slippageTolerance)) / 10000,
+            to: address(this),
+            deadline: block.timestamp + 300
+        });
 
         emit UniswapInvested(tokenAmount, counterPartyTokenAmount, liquidity);
     }
@@ -142,22 +132,22 @@ contract UniswapAdapter {
                 deadline: block.timestamp + 300
             });
 
-        // 将配对代币兑换回底层资产
-        if (address(token) != pair.token0() && counterPartyAmount > 0) {
-            // 创建正确的交易路径
+        // 将配对代币兑换回底层资产（无论哪种方向都需要处理）
+        if (counterPartyAmount > 0) {
+            // 创建正确的交易路径（始终从counterPartyToken兑换到token）
             address[] memory path = new address[](2);
             path[0] = address(counterPartyToken);
             path[1] = address(token);
 
-            uint256 expectedOut = i_uniswapRouter.getAmountsOut(counterPartyAmount, path)[1];
-            uint256 minOut = (expectedOut * (10000 - s_slippageTolerance)) / 10000;
-            
-            _swap(
-                counterPartyToken,
-                token,
+            uint256 expectedOut = i_uniswapRouter.getAmountsOut(
                 counterPartyAmount,
-                minOut
-            );
+                path
+            )[1];
+            uint256 minOut = (expectedOut * (10000 - s_slippageTolerance)) /
+                10000;
+
+            uint256 swapAmount = _swap(path, counterPartyAmount, minOut);
+            tokenAmount += swapAmount; // 累加swap获得的底层代币
         }
 
         return tokenAmount;
@@ -165,26 +155,19 @@ contract UniswapAdapter {
 
     /**
      * @notice 执行代币兑换的通用逻辑
-     * @param tokenIn 输入代币
-     * @param tokenOut 输出代币
+     * @param path 交换路径
      * @param amountIn 输入代币数量
      * @param minOut 最小输出数量（用于滑点保护）
      * @return 实际兑换获得的代币数量
      */
     function _swap(
-        IERC20 tokenIn,
-        IERC20 tokenOut,
+        address[] memory path,
         uint256 amountIn,
         uint256 minOut
     ) internal returns (uint256) {
-        // 创建交易路径
-        address[] memory path = new address[](2);
-        path[0] = address(tokenIn);
-        path[1] = address(tokenOut);
-
         // 执行兑换
-        tokenIn.approve(address(i_uniswapRouter), amountIn);
-        
+        IERC20(path[0]).approve(address(i_uniswapRouter), amountIn);
+
         uint256[] memory amounts = i_uniswapRouter.swapExactTokensForTokens({
             amountIn: amountIn,
             amountOutMin: minOut,
@@ -221,10 +204,6 @@ contract UniswapAdapter {
                 (10000 - slippage)) / 10000
         );
     }
-
-    // slither-disable-end reentrancy-benign
-    // slither-disable-end reentrancy-events
-    // slither-disable-end reentrancy-eth
 
     function setSlippageTolerance(uint256 tolerance) internal {
         s_slippageTolerance = tolerance;

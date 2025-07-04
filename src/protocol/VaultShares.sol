@@ -9,6 +9,7 @@ import {DataTypes} from "../vendor/DataTypes.sol";
 import {IUniswapV2Pair} from "../vendor/IUniswapV2Pair.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {VaultGuardians} from "./VaultGuardians.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title VaultShares
@@ -33,13 +34,14 @@ contract VaultShares is
         uint256 requiredLiquidity
     );
     error VaultShares__NotActive();
+    error VaultShares__NotApprovedToken(address token);
 
     /*//////////////////////////////////////////////////////////////
                             状态变量
     //////////////////////////////////////////////////////////////*/
-    IERC20 internal immutable i_uniswapLiquidityToken;
+
     IERC20 internal immutable i_aaveAToken;
-    IERC20 internal immutable i_counterPartyToken;
+
     IERC20 internal immutable i_weth;
 
     address private immutable i_operatorGuardian; // 操作管理者地址
@@ -48,9 +50,10 @@ contract VaultShares is
     bool private s_isActive;
 
     AllocationData private s_allocationData;
+    IERC20 internal s_counterPartyToken;
+    IERC20 internal s_uniswapLiquidityToken;
 
     uint256 private constant ALLOCATION_PRECISION = 1_000;
-    uint256 private constant MIN_HOLD_ALLOCATION_PERCENT = 100;
 
     /*//////////////////////////////////////////////////////////////
                                  事件
@@ -58,6 +61,10 @@ contract VaultShares is
     event UpdatedAllocation(AllocationData allocationData);
     event NoLongerActive();
     event FundsInvested();
+    event CounterPartyTokenUpdated(
+        IERC20 indexed oldToken,
+        IERC20 indexed newToken
+    );
 
     /*//////////////////////////////////////////////////////////////
                                修饰符
@@ -87,7 +94,7 @@ contract VaultShares is
      * @notice 仅在金库活跃时执行再投资，用于调整仓位
      */
     modifier divestThenInvest() {
-        _liquidatePositions();
+        _devestFunds(totalAssets());
         _;
         if (s_isActive) {
             _investFunds(IERC20(asset()).balanceOf(address(this)));
@@ -108,7 +115,7 @@ contract VaultShares is
         i_operatorGuardian = constructorData.operatorGuardian; // 初始化操作管理者
         i_guardianAndDaoCut = constructorData.guardianAndDaoCut;
         i_governanceGuardian = constructorData.governanceGuardian; // 初始化治理守护者协议
-        i_counterPartyToken = constructorData.counterPartyToken;
+        s_counterPartyToken = constructorData.counterPartyToken;
         i_weth = constructorData.weth; // 设置WETH引用
         s_isActive = true;
         updateHoldingAllocation(constructorData.allocationData);
@@ -119,7 +126,7 @@ contract VaultShares is
                 .getReserveData(address(constructorData.asset))
                 .aTokenAddress
         );
-        i_uniswapLiquidityToken = IERC20(
+        s_uniswapLiquidityToken = IERC20(
             i_uniswapFactory.getPair(
                 address(constructorData.asset),
                 address(constructorData.counterPartyToken)
@@ -150,38 +157,73 @@ contract VaultShares is
             tokenAllocationData.uniswapAllocation +
             tokenAllocationData.aaveAllocation;
 
-        // 验证总分配不超过100%
+        // 验证总分配等于100%
         if (totalAllocation != ALLOCATION_PRECISION) {
             revert VaultShares__AllocationNot100Percent(totalAllocation);
         }
 
-        // 验证基础流动性不低于10%
-        if (tokenAllocationData.holdAllocation < MIN_HOLD_ALLOCATION_PERCENT) {
-            revert VaultShares__InsufficientLiquidity(
-                tokenAllocationData.holdAllocation,
-                MIN_HOLD_ALLOCATION_PERCENT
-            );
-        }
         s_allocationData = tokenAllocationData;
         emit UpdatedAllocation(tokenAllocationData);
     }
 
-    function totalAssets()
-        public
-        view
-        override(ERC4626, IERC4626)
-        returns (uint256)
-    {
-        // 1. 获取合约中剩余的底层资产余额
-        uint256 baseBalance = IERC20(asset()).balanceOf(address(this));
+    /**
+     * @notice 更新金库的交易对
+     * @notice 新交易对必须是VaultGuardiansBase批准的代币
+     * @param newCounterPartyToken 新的交易对代币
+     */
+    function updateCounterPartyToken(
+        IERC20 newCounterPartyToken
+    ) external onlyGovernanceGuardian isActive {
+        // 清算现有流动性
+        uint256 reinvestamount = _uniswapDivest(
+            IERC20(asset()),
+            s_counterPartyToken,
+            s_uniswapLiquidityToken.balanceOf(address(this))
+        );
 
-        // 2. 添加 Aave 投资价值（aToken 与底层资产 1:1 对应）
-        uint256 aaveBalance = i_aaveAToken.balanceOf(address(this));
+        // 存储旧交易对代币以供事件记录
+        IERC20 oldToken = s_counterPartyToken;
 
-        // 3. 添加 Uniswap 投资价值（计算 LP Token 对应的底层资产数量）
-        uint256 uniswapBalance = _getUniswapUnderlyingAssetValue();
+        // 更新交易对代币
+        s_counterPartyToken = newCounterPartyToken;
 
-        return baseBalance + aaveBalance + uniswapBalance;
+        // 重新获取Uniswap LP代币地址
+        s_uniswapLiquidityToken = IERC20(
+            i_uniswapFactory.getPair(
+                address(asset()),
+                address(newCounterPartyToken)
+            )
+        );
+
+        // 重新投资资金
+        _uniswapInvest(
+            IERC20(asset()),
+            IERC20(s_counterPartyToken),
+            reinvestamount
+        );
+
+        // 发出事件
+        emit CounterPartyTokenUpdated(oldToken, newCounterPartyToken);
+    }
+
+    /**
+     * @notice 守护者更新Uniswap滑点容忍度
+     * @param tolerance 新的滑点容忍值（以万分之一为单位）
+     * @dev 示例：200 = 2%
+     */
+    function updateUniswapSlippage(
+        uint256 tolerance
+    ) external onlyGovernanceGuardian {
+        // 验证新的滑点容忍度不超过最大限制（10%）
+        require(tolerance <= 1000, "Slippage tolerance cannot exceed 10%");
+
+        // 验证新的滑点容忍度与当前值不同
+        require(
+            tolerance != slippageTolerance(),
+            "New tolerance is the same as current tolerance"
+        );
+
+        super.setSlippageTolerance(tolerance); // 调用父类函数设置新滑点容忍度
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -210,15 +252,23 @@ contract VaultShares is
         }
 
         uint256 shares = previewDeposit(assets);
-        _deposit(_msgSender(), receiver, assets, shares);
+        // 计算管理费和DAO应得份额
+        uint256 governanceCut = (shares * i_guardianAndDaoCut) / 10000; // 0.1%费用
+
+        // 用户实际获得份额 = 总份额 - 2*管理费
+        uint256 userShares = shares - 2 * governanceCut;
+
+        // 铸造份额
+        _deposit(_msgSender(), receiver, assets, userShares);
 
         // 铸造VGT治理代币（仅限WETH存款）
         if (address(i_weth) == address(asset())) {
             VaultGuardians(i_governanceGuardian).mintVGT(receiver, assets);
         }
 
-        _mint(i_operatorGuardian, shares / i_guardianAndDaoCut);
-        _mint(i_governanceGuardian, shares / i_guardianAndDaoCut);
+        // 铸造管理费和DAO份额
+        _mint(i_operatorGuardian, governanceCut);
+        _mint(i_governanceGuardian, governanceCut);
 
         _investFunds(assets);
         return shares;
@@ -239,32 +289,16 @@ contract VaultShares is
         }
 
         assets = previewRedeem(shares);
+
+        // 按比例清算投资头寸
+        _devestFunds(assets);
+
         _withdraw(_msgSender(), receiver, owner, assets, shares);
 
         // 销毁VGT治理代币（仅限WETH金库）
         if (address(i_weth) == address(asset())) {
             VaultGuardians(i_governanceGuardian).burnVGT(receiver, assets);
         }
-    }
-
-    /**
-     * @notice 守护者更新Uniswap滑点容忍度
-     * @param tolerance 新的滑点容忍值（以万分之一为单位）
-     * @dev 示例：200 = 2%
-     */
-    function updateUniswapSlippage(
-        uint256 tolerance
-    ) external onlyGovernanceGuardian {
-        // 验证新的滑点容忍度不超过最大限制（10%）
-        require(tolerance <= 1000, "Slippage tolerance cannot exceed 10%");
-
-        // 验证新的滑点容忍度与当前值不同
-        require(
-            tolerance != slippageTolerance(),
-            "New tolerance is the same as current tolerance"
-        );
-
-        super.setSlippageTolerance(tolerance); // 调用父类函数设置新滑点容忍度
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -283,7 +317,7 @@ contract VaultShares is
         if (uniswapAllocation > 0) {
             _uniswapInvest(
                 IERC20(asset()),
-                IERC20(i_counterPartyToken),
+                IERC20(s_counterPartyToken),
                 uniswapAllocation
             );
         }
@@ -297,14 +331,49 @@ contract VaultShares is
         emit FundsInvested();
     }
 
+    // 按配置比例清算投资头寸
+    function _devestFunds(uint256 assetsToRedeem) private {
+        if (assetsToRedeem == 0) return;
+
+        // 按配置比例清算Uniswap头寸
+        if (
+            s_allocationData.uniswapAllocation > 0 &&
+            s_uniswapLiquidityToken.balanceOf(address(this)) > 0
+        ) {
+            uint256 uniswapToLiquidate = (assetsToRedeem *
+                s_allocationData.uniswapAllocation) / 1000;
+            _uniswapDivest(
+                IERC20(asset()),
+                s_counterPartyToken,
+                Math.min(
+                    uniswapToLiquidate,
+                    s_uniswapLiquidityToken.balanceOf(address(this))
+                )
+            );
+        }
+
+        // 按配置比例清算Aave头寸
+        if (
+            s_allocationData.aaveAllocation > 0 &&
+            i_aaveAToken.balanceOf(address(this)) > 0
+        ) {
+            uint256 aaveToLiquidate = (assetsToRedeem *
+                s_allocationData.aaveAllocation) / 1000;
+            _aaveDivest(
+                IERC20(asset()),
+                Math.min(aaveToLiquidate, i_aaveAToken.balanceOf(address(this)))
+            );
+        }
+    }
+
     // 计算 Uniswap LP Token 对应的底层资产价值
     function _getUniswapUnderlyingAssetValue() private view returns (uint256) {
-        uint256 liquidityTokens = i_uniswapLiquidityToken.balanceOf(
+        uint256 liquidityTokens = s_uniswapLiquidityToken.balanceOf(
             address(this)
         );
         if (liquidityTokens == 0) return 0;
 
-        IUniswapV2Pair pair = IUniswapV2Pair(address(i_uniswapLiquidityToken));
+        IUniswapV2Pair pair = IUniswapV2Pair(address(s_uniswapLiquidityToken));
         (uint112 reserve0, uint112 reserve1, ) = pair.getReserves();
         uint256 totalSupply = pair.totalSupply();
 
@@ -319,24 +388,6 @@ contract VaultShares is
             return amount1 + (amount0 * reserve1) / reserve0; // 将amount0(USDC)转换为底层资产
         } else {
             revert("Invalid asset pair");
-        }
-    }
-
-    function _liquidatePositions() private {
-        uint256 liquidityTokens = i_uniswapLiquidityToken.balanceOf(
-            address(this)
-        );
-        if (liquidityTokens > 0) {
-            _uniswapDivest(
-                IERC20(asset()),
-                IERC20(i_counterPartyToken),
-                liquidityTokens
-            );
-        }
-
-        liquidityTokens = i_aaveAToken.balanceOf(address(this));
-        if (liquidityTokens > 0) {
-            _aaveDivest(IERC20(asset()), liquidityTokens);
         }
     }
 
@@ -392,7 +443,7 @@ contract VaultShares is
      * @return 返回 Uniswap LP 代币地址
      */
     function getUniswapLiquidtyToken() external view returns (address) {
-        return address(i_uniswapLiquidityToken);
+        return address(s_uniswapLiquidityToken);
     }
 
     /**
@@ -400,5 +451,23 @@ contract VaultShares is
      */
     function getAllocationData() external view returns (AllocationData memory) {
         return s_allocationData;
+    }
+
+    function totalAssets()
+        public
+        view
+        override(ERC4626, IERC4626)
+        returns (uint256)
+    {
+        // 1. 获取合约中剩余的底层资产余额
+        uint256 baseBalance = IERC20(asset()).balanceOf(address(this));
+
+        // 2. 添加 Aave 投资价值（aToken 与底层资产 1:1 对应）
+        uint256 aaveBalance = i_aaveAToken.balanceOf(address(this));
+
+        // 3. 添加 Uniswap 投资价值（计算 LP Token 对应的底层资产数量）
+        uint256 uniswapBalance = _getUniswapUnderlyingAssetValue();
+
+        return baseBalance + aaveBalance + uniswapBalance;
     }
 }
