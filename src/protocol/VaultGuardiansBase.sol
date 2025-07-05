@@ -169,11 +169,10 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
         IERC20 token,
         IERC20 counterPartyToken
     ) external onlyGuardian(i_weth) returns (address) {
-        // slither-disable-next-line uninitialized-local
         if (
-            !s_isApprovedToken[address(token)] &&
-            !s_isApprovedToken[address(counterPartyToken)] &&
-            token != i_weth
+            !s_isApprovedToken[address(token)] ||
+            !s_isApprovedToken[address(counterPartyToken)] ||
+            token == i_weth
         ) {
             revert VaultGuardiansBase__NotApprovedToken(address(token));
         }
@@ -266,8 +265,8 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
     ) external onlyGuardian(token) {
         // 验证新交易对代币是否已批准
         if (
-            s_isApprovedToken[address(newCounterPartyToken)] &&
-            newCounterPartyToken != token
+            !s_isApprovedToken[address(newCounterPartyToken)] ||
+            newCounterPartyToken == token
         ) {
             revert VaultGuardiansBase__NotApprovedToken(
                 address(newCounterPartyToken)
@@ -309,12 +308,6 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
         s_guardianVaultCount[msg.sender]++;
         emit GuardianAdded(msg.sender, token);
 
-        // 仅对WETH质押铸造VGT
-        if (address(token) == address(i_weth)) {
-            // 铸造数量等于质押金额
-            i_vgToken.mint(msg.sender, s_guardianStakePrice);
-        }
-
         // 执行质押转账
         token.safeTransferFrom(msg.sender, address(this), s_guardianStakePrice);
         bool succ = token.approve(address(tokenVault), s_guardianStakePrice);
@@ -333,13 +326,6 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
         IVaultShares tokenVault = IVaultShares(s_guardians[msg.sender][token]);
         s_guardians[msg.sender][token] = IVaultShares(address(0)); //将管理员的权限置为0,管理员无法再管理该金库
         address vaultAddress = address(tokenVault);
-        // 移除金库有效性标记
-        if (s_validVaults[vaultAddress]) {
-            delete s_validVaults[vaultAddress];
-        }
-        if (s_guardianVaultCount[msg.sender] > 0) {
-            s_guardianVaultCount[msg.sender]--;
-        }
         emit GaurdianRemoved(msg.sender, token);
         tokenVault.setNotActive();
         uint256 maxRedeemable = tokenVault.maxRedeem(msg.sender);
@@ -349,10 +335,12 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
             msg.sender
         );
 
-        // 仅销毁WETH相关的治理代币
-        if (address(token) == address(i_weth)) {
-            // 销毁数量等于质押金额
-            i_vgToken.burn(msg.sender, s_guardianStakePrice);
+        // 移除金库有效性标记
+        if (s_validVaults[vaultAddress]) {
+            delete s_validVaults[vaultAddress];
+        }
+        if (s_guardianVaultCount[msg.sender] > 0) {
+            s_guardianVaultCount[msg.sender]--;
         }
 
         return numberOfAssetsReturned;

@@ -29,7 +29,7 @@ contract WethForkTest is Fork_Test {
         weth.mint(mintAmount, guardian);
         vm.startPrank(guardian);
         weth.approve(address(vaultGuardians), mintAmount);
-        address wethVault = vaultGuardians.becomeGuardian(allocationData);
+        address wethVault = vaultGuardians.becomeGuardian(allocationData, usdc);
         wethVaultShares = VaultShares(wethVault);
         vm.stopPrank();
         _;

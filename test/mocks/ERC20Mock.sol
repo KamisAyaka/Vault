@@ -13,7 +13,4 @@ contract ERC20Mock is ERC20 {
     function burn(uint256 amount, address from) external {
         _burn(from, amount);
     }
-
-    // add this to be excluded from coverage report
-    function test() public {}
 }

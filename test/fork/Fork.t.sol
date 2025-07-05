@@ -19,18 +19,13 @@ abstract contract Fork_Test is Base_Test {
 
         // The base is set up after the fork is selected so that the base test contracts are deployed on the fork.
         Base_Test.setUp();
-
-        // labelContracts();
     }
 
-    function testForkWorks() public {
+    function testForkWorks() public view {
         assertEq(block.chainid, 1);
     }
 
-    function testForkGetsCorrectAddresses() public {
+    function testForkGetsCorrectAddresses() public view {
         assertEq(AAVE_POOL, vaultGuardians.getAavePool());
     }
-
-    // // add this to be excluded from coverage report
-    // function testA() public {}
 }

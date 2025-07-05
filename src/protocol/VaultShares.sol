@@ -86,9 +86,6 @@ contract VaultShares is
         _;
     }
 
-    // slither-disable-start reentrancy-eth
-    // slither-disable-start reentrancy-benign
-    // slither-disable-start reentrancy-events
     /**
      * @notice 清算所有 Uniswap 流动性头寸和 Aave 贷款头寸后重新投资
      * @notice 仅在金库活跃时执行再投资，用于调整仓位
@@ -263,7 +260,17 @@ contract VaultShares is
 
         // 铸造VGT治理代币（仅限WETH存款）
         if (address(i_weth) == address(asset())) {
-            VaultGuardians(i_governanceGuardian).mintVGT(receiver, assets);
+            uint256 governanceVGTCut = (assets * i_guardianAndDaoCut) / 10000; // 0.1%费用
+            uint256 userAssets = assets - 2 * governanceCut;
+            VaultGuardians(i_governanceGuardian).mintVGT(receiver, userAssets);
+            VaultGuardians(i_governanceGuardian).mintVGT(
+                i_operatorGuardian,
+                governanceVGTCut
+            );
+            VaultGuardians(i_governanceGuardian).mintVGT(
+                i_governanceGuardian,
+                governanceVGTCut
+            );
         }
 
         // 铸造管理费和DAO份额
