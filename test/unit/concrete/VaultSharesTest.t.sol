@@ -185,13 +185,12 @@ contract VaultSharesTest is Base_Test {
         weth.approve(address(wethVaultShares), mintAmount);
         wethVaultShares.deposit(mintAmount, user);
 
-        uint256 vgtCut = (mintAmount * defaultGuardianAndDaoCut) / 10000;
-        uint256 expectedVGT = mintAmount - 2 * vgtCut;
+        // 修改为验证份额与VGT的一致性
+        uint256 userShares = wethVaultShares.balanceOf(user);
+        uint256 vgtBalance = IERC20(vaultGuardians.getVgTokenAddress())
+            .balanceOf(user);
 
-        assertEq(
-            IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(user),
-            expectedVGT
-        );
+        assertEq(vgtBalance, userShares);
     }
 
     function testUserRedeemsFundsAndVGTIsBurned()
@@ -199,15 +198,15 @@ contract VaultSharesTest is Base_Test {
         hasGuardian
         userIsInvested
     {
-        uint256 initialVGTBalance = IERC20(vaultGuardians.getVgTokenAddress())
+        uint256 initialShares = wethVaultShares.balanceOf(user);
+        uint256 initialVGT = IERC20(vaultGuardians.getVgTokenAddress())
             .balanceOf(user);
-        uint256 AssetsToRedeem = initialVGTBalance / 2; // 使用VGT余额作为赎回基准
+        uint256 sharesToRedeem = initialShares / 2; // 使用份额作为赎回基准
 
         vm.prank(user);
-        wethVaultShares.withdraw(AssetsToRedeem, user, user);
+        wethVaultShares.redeem(sharesToRedeem, user, user);
 
-        uint256 expectedVGT = initialVGTBalance - AssetsToRedeem;
-
+        uint256 expectedVGT = initialVGT - sharesToRedeem;
         assertEq(
             IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(user),
             expectedVGT
@@ -226,27 +225,28 @@ contract VaultSharesTest is Base_Test {
         weth.mint(mintAmount, user);
         vm.startPrank(user);
         weth.approve(address(wethVaultShares), mintAmount);
-        wethVaultShares.deposit(mintAmount, user);
+        uint256 totalshares = wethVaultShares.deposit(mintAmount, user);
 
-        uint256 vgtCut = (mintAmount * defaultGuardianAndDaoCut) / 10000;
-        uint256 expectedVGT = mintAmount - 2 * vgtCut;
+        uint256 userShares = wethVaultShares.balanceOf(user);
+        uint256 governanceShares = (totalshares - userShares) / 2;
 
+        // 验证用户VGT等于自身份额
         assertEq(
             IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(user),
-            expectedVGT
+            userShares
         );
         // 验证守护者和DAO的VGT铸造
         assertEq(
             IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(
                 address(vaultGuardians)
             ),
-            vgtCut + vaultGuardiansVGTbefore
+            vaultGuardiansVGTbefore + governanceShares
         );
         assertEq(
             IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(
                 wethVaultShares.getOperatorGuardian()
             ),
-            vgtCut + OperatorGuardianVGTbefore
+            OperatorGuardianVGTbefore + governanceShares
         );
     }
 

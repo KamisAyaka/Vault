@@ -249,8 +249,7 @@ contract VaultShares is
 
         uint256 shares = previewDeposit(assets);
         // 计算管理费和DAO应得份额
-        uint256 governanceCut = (assets * i_guardianAndDaoCut) / 10000; // 0.1%费用
-        uint256 governanceShares = previewDeposit(governanceCut);
+        uint256 governanceShares = (shares * i_guardianAndDaoCut) / 10000; // 0.1%费用
 
         // 用户实际获得份额 = 总份额 - 2*管理费
         uint256 userShares = shares - 2 * governanceShares;
@@ -260,16 +259,15 @@ contract VaultShares is
 
         // 铸造VGT治理代币（仅限WETH存款）
         if (address(i_weth) == address(asset())) {
-            uint256 governanceVGTCut = (assets * i_guardianAndDaoCut) / 10000; // 0.1%费用
-            uint256 userAssets = assets - 2 * governanceCut;
-            VaultGuardians(i_governanceGuardian).mintVGT(receiver, userAssets);
+            // 使用份额而非资产计算VGT铸造量
+            VaultGuardians(i_governanceGuardian).mintVGT(receiver, userShares);
             VaultGuardians(i_governanceGuardian).mintVGT(
                 i_operatorGuardian,
-                governanceVGTCut
+                governanceShares
             );
             VaultGuardians(i_governanceGuardian).mintVGT(
                 i_governanceGuardian,
-                governanceVGTCut
+                governanceShares
             );
         }
 
@@ -301,11 +299,9 @@ contract VaultShares is
         }
 
         uint256 assets = previewMint(shares);
-        // 计算管理费和DAO应得份额
-        uint256 governanceCut = (assets * i_guardianAndDaoCut) / 10000; // 0.1%费用
 
         // 用户实际获得份额 = 总份额 - 2*管理费
-        uint256 governanceShares = previewDeposit(governanceCut);
+        uint256 governanceShares = (shares * i_guardianAndDaoCut) / 10000; // 0.1%费用
         uint256 userShares = shares - 2 * governanceShares;
 
         // 铸造份额
@@ -313,16 +309,15 @@ contract VaultShares is
 
         // 铸造VGT治理代币（仅限WETH存款）
         if (address(i_weth) == address(asset())) {
-            uint256 governanceVGTCut = (assets * i_guardianAndDaoCut) / 10000; // 0.1%费用
-            uint256 userAssets = assets - 2 * governanceCut;
-            VaultGuardians(i_governanceGuardian).mintVGT(receiver, userAssets);
+            // 使用份额而非资产计算VGT铸造量
+            VaultGuardians(i_governanceGuardian).mintVGT(receiver, userShares);
             VaultGuardians(i_governanceGuardian).mintVGT(
                 i_operatorGuardian,
-                governanceVGTCut
+                governanceShares
             );
             VaultGuardians(i_governanceGuardian).mintVGT(
                 i_governanceGuardian,
-                governanceVGTCut
+                governanceShares
             );
         }
 
@@ -357,7 +352,8 @@ contract VaultShares is
 
         // 销毁VGT治理代币（仅限WETH金库）
         if (address(i_weth) == address(asset())) {
-            VaultGuardians(i_governanceGuardian).burnVGT(receiver, assets);
+            // 使用份额而非资产销毁VGT
+            VaultGuardians(i_governanceGuardian).burnVGT(receiver, shares);
         }
     }
 
