@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.25;
 
 import {ERC4626, ERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {IVaultShares, IERC4626} from "../interfaces/IVaultShares.sol";
@@ -25,24 +25,24 @@ contract VaultShares is
     UniswapAdapter, // Uniswap协议适配器
     ReentrancyGuard // 防止重入攻击
 {
-    // 错误定义
+    /*//////////////////////////////////////////////////////////////
+                            错误定义
+    //////////////////////////////////////////////////////////////*/
     error VaultShares__DepositMoreThanMax(uint256 amount, uint256 max);
-    error VaultShares__NotGovernanceGuardianContract();
+    error VaultShares__InvalidGovernanceGuardian();
     error VaultShares__AllocationNot100Percent(uint256 totalAllocation);
-    error VaultShares__InsufficientLiquidity(
-        uint256 currentLiquidity,
-        uint256 requiredLiquidity
-    );
-    error VaultShares__NotActive();
-    error VaultShares__NotApprovedToken(address token);
+    error VaultShares__VaultNotActive();
+    error VaultShares__SlippageToleranceTooHigh(uint256 tolerance, uint256 max);
+    error VaultShares__SlippageToleranceSameAsCurrent();
 
     /*//////////////////////////////////////////////////////////////
                             状态变量
     //////////////////////////////////////////////////////////////*/
 
     IERC20 internal immutable i_aaveAToken;
-
     IERC20 internal immutable i_weth;
+    IERC20 internal s_counterPartyToken;
+    IERC20 internal s_uniswapLiquidityToken;
 
     address private immutable i_operatorGuardian; // 操作管理者地址
     address private immutable i_governanceGuardian; // 治理守护者协议地址
@@ -50,8 +50,6 @@ contract VaultShares is
     bool private s_isActive;
 
     AllocationData private s_allocationData;
-    IERC20 internal s_counterPartyToken;
-    IERC20 internal s_uniswapLiquidityToken;
 
     uint256 private constant ALLOCATION_PRECISION = 1_000;
 
@@ -73,7 +71,7 @@ contract VaultShares is
     /// @dev 仅治理守护者协议可调用
     modifier onlyGovernanceGuardian() {
         if (msg.sender != i_governanceGuardian) {
-            revert VaultShares__NotGovernanceGuardianContract();
+            revert VaultShares__InvalidGovernanceGuardian();
         }
         _;
     }
@@ -81,14 +79,11 @@ contract VaultShares is
     /// @dev 仅当金库处于活跃状态时可调用
     modifier isActive() {
         if (!s_isActive) {
-            revert VaultShares__NotActive();
+            revert VaultShares__VaultNotActive();
         }
         _;
     }
 
-    // slither-disable-start reentrancy-eth
-    // slither-disable-start reentrancy-benign
-    // slither-disable-start reentrancy-events
     /**
      * @notice 清算所有 Uniswap 流动性头寸和 Aave 贷款头寸后重新投资
      * @notice 仅在金库活跃时执行再投资，用于调整仓位
@@ -116,11 +111,11 @@ contract VaultShares is
         i_guardianAndDaoCut = constructorData.guardianAndDaoCut;
         i_governanceGuardian = constructorData.governanceGuardian; // 初始化治理守护者协议
         s_counterPartyToken = constructorData.counterPartyToken;
-        i_weth = constructorData.weth; // 设置WETH引用
+        i_weth = VaultGuardians(i_governanceGuardian).getWethAddress();
         s_isActive = true;
         updateHoldingAllocation(constructorData.allocationData);
 
-        // 获取外部合约地址
+        // 获取外部合约代币地址
         i_aaveAToken = IERC20(
             IPool(constructorData.aavePool)
                 .getReserveData(address(constructorData.asset))
@@ -191,7 +186,7 @@ contract VaultShares is
         s_uniswapLiquidityToken = IERC20(
             i_uniswapFactory.getPair(
                 address(asset()),
-                address(newCounterPartyToken)
+                address(s_counterPartyToken)
             )
         );
 
@@ -215,19 +210,20 @@ contract VaultShares is
         uint256 tolerance
     ) external onlyGovernanceGuardian {
         // 验证新的滑点容忍度不超过最大限制（10%）
-        require(tolerance <= 1000, "Slippage tolerance cannot exceed 10%");
+        if (tolerance > 1000) {
+            revert VaultShares__SlippageToleranceTooHigh(tolerance, 1000);
+        }
 
         // 验证新的滑点容忍度与当前值不同
-        require(
-            tolerance != slippageTolerance(),
-            "New tolerance is the same as current tolerance"
-        );
+        if (tolerance == slippageTolerance()) {
+            revert VaultShares__SlippageToleranceSameAsCurrent();
+        }
 
         super.setSlippageTolerance(tolerance); // 调用父类函数设置新滑点容忍度
     }
 
     /*//////////////////////////////////////////////////////////////
-                               存款逻辑
+                               存取款逻辑
     //////////////////////////////////////////////////////////////*/
     /**
      * @dev 覆盖 Openzeppelin 的 deposit 实现
@@ -253,25 +249,89 @@ contract VaultShares is
 
         uint256 shares = previewDeposit(assets);
         // 计算管理费和DAO应得份额
-        uint256 governanceCut = (shares * i_guardianAndDaoCut) / 10000; // 0.1%费用
+        uint256 governanceCut = (assets * i_guardianAndDaoCut) / 10000; // 0.1%费用
+        uint256 governanceShares = previewDeposit(governanceCut);
 
         // 用户实际获得份额 = 总份额 - 2*管理费
-        uint256 userShares = shares - 2 * governanceCut;
+        uint256 userShares = shares - 2 * governanceShares;
 
         // 铸造份额
         _deposit(_msgSender(), receiver, assets, userShares);
 
         // 铸造VGT治理代币（仅限WETH存款）
         if (address(i_weth) == address(asset())) {
-            VaultGuardians(i_governanceGuardian).mintVGT(receiver, assets);
+            uint256 governanceVGTCut = (assets * i_guardianAndDaoCut) / 10000; // 0.1%费用
+            uint256 userAssets = assets - 2 * governanceCut;
+            VaultGuardians(i_governanceGuardian).mintVGT(receiver, userAssets);
+            VaultGuardians(i_governanceGuardian).mintVGT(
+                i_operatorGuardian,
+                governanceVGTCut
+            );
+            VaultGuardians(i_governanceGuardian).mintVGT(
+                i_governanceGuardian,
+                governanceVGTCut
+            );
         }
 
         // 铸造管理费和DAO份额
-        _mint(i_operatorGuardian, governanceCut);
-        _mint(i_governanceGuardian, governanceCut);
+        _mint(i_operatorGuardian, governanceShares);
+        _mint(i_governanceGuardian, governanceShares);
 
         _investFunds(assets);
         return shares;
+    }
+
+    /**
+     * @dev 覆盖 Openzeppelin 的 mint 实现
+     * @dev 向 DAO 和 守护者铸造管理费份额
+     * @dev 增加WETH存款的VGT铸造逻辑
+     */
+    function mint(
+        uint256 shares,
+        address receiver
+    )
+        public
+        override(IERC4626, ERC4626)
+        isActive
+        nonReentrant
+        returns (uint256)
+    {
+        if (shares > maxMint(receiver)) {
+            revert VaultShares__DepositMoreThanMax(shares, maxMint(receiver));
+        }
+
+        uint256 assets = previewMint(shares);
+        // 计算管理费和DAO应得份额
+        uint256 governanceCut = (assets * i_guardianAndDaoCut) / 10000; // 0.1%费用
+
+        // 用户实际获得份额 = 总份额 - 2*管理费
+        uint256 governanceShares = previewDeposit(governanceCut);
+        uint256 userShares = shares - 2 * governanceShares;
+
+        // 铸造份额
+        _deposit(_msgSender(), receiver, assets, userShares);
+
+        // 铸造VGT治理代币（仅限WETH存款）
+        if (address(i_weth) == address(asset())) {
+            uint256 governanceVGTCut = (assets * i_guardianAndDaoCut) / 10000; // 0.1%费用
+            uint256 userAssets = assets - 2 * governanceCut;
+            VaultGuardians(i_governanceGuardian).mintVGT(receiver, userAssets);
+            VaultGuardians(i_governanceGuardian).mintVGT(
+                i_operatorGuardian,
+                governanceVGTCut
+            );
+            VaultGuardians(i_governanceGuardian).mintVGT(
+                i_governanceGuardian,
+                governanceVGTCut
+            );
+        }
+
+        // 铸造管理费和DAO份额
+        _mint(i_operatorGuardian, governanceShares);
+        _mint(i_governanceGuardian, governanceShares);
+
+        _investFunds(assets);
+        return assets;
     }
 
     /**
@@ -289,6 +349,32 @@ contract VaultShares is
         }
 
         assets = previewRedeem(shares);
+
+        // 按比例清算投资头寸
+        _devestFunds(assets);
+
+        _withdraw(_msgSender(), receiver, owner, assets, shares);
+
+        // 销毁VGT治理代币（仅限WETH金库）
+        if (address(i_weth) == address(asset())) {
+            VaultGuardians(i_governanceGuardian).burnVGT(receiver, assets);
+        }
+    }
+
+    /**
+     * @notice 用户赎回资产时销毁对应VGT治理代币
+     * @dev 覆盖标准withdraw实现
+     */
+    function withdraw(
+        uint256 assets,
+        address receiver,
+        address owner
+    ) public override(IERC4626, ERC4626) nonReentrant returns (uint256 shares) {
+        shares = previewWithdraw(assets);
+        uint256 maxAssets = maxWithdraw(owner);
+        if (assets > maxAssets) {
+            revert ERC4626ExceededMaxWithdraw(owner, assets, maxAssets);
+        }
 
         // 按比例清算投资头寸
         _devestFunds(assets);
@@ -331,7 +417,10 @@ contract VaultShares is
         emit FundsInvested();
     }
 
-    // 按配置比例清算投资头寸
+    /**
+     * @notice 按配置比例清算投资头寸
+     * @param assetsToRedeem 需要取回的资产数量
+     */
     function _devestFunds(uint256 assetsToRedeem) private {
         if (assetsToRedeem == 0) return;
 
@@ -366,34 +455,10 @@ contract VaultShares is
         }
     }
 
-    // 计算 Uniswap LP Token 对应的底层资产价值
-    function _getUniswapUnderlyingAssetValue() private view returns (uint256) {
-        uint256 liquidityTokens = s_uniswapLiquidityToken.balanceOf(
-            address(this)
-        );
-        if (liquidityTokens == 0) return 0;
-
-        IUniswapV2Pair pair = IUniswapV2Pair(address(s_uniswapLiquidityToken));
-        (uint112 reserve0, uint112 reserve1, ) = pair.getReserves();
-        uint256 totalSupply = pair.totalSupply();
-
-        // 计算LP代币对应的两种资产数量
-        uint256 amount0 = (uint256(reserve0) * liquidityTokens) / totalSupply;
-        uint256 amount1 = (uint256(reserve1) * liquidityTokens) / totalSupply;
-
-        // 返回正确的底层资产价值
-        if (asset() == pair.token0()) {
-            return amount0 + (amount1 * reserve0) / reserve1; // 将amount1(WETH)转换为底层资产
-        } else if (asset() == pair.token1()) {
-            return amount1 + (amount0 * reserve1) / reserve0; // 将amount0(USDC)转换为底层资产
-        } else {
-            revert("Invalid asset pair");
-        }
-    }
-
     /*//////////////////////////////////////////////////////////////
                                操作函数
     //////////////////////////////////////////////////////////////*/
+
     /**
      * @notice 强制清算并重新平衡投资组合
      * @notice 任何人都可调用但需支付高昂Gas费用
@@ -469,5 +534,30 @@ contract VaultShares is
         uint256 uniswapBalance = _getUniswapUnderlyingAssetValue();
 
         return baseBalance + aaveBalance + uniswapBalance;
+    }
+
+    // 计算 Uniswap LP Token 对应的底层资产价值
+    function _getUniswapUnderlyingAssetValue() private view returns (uint256) {
+        uint256 liquidityTokens = s_uniswapLiquidityToken.balanceOf(
+            address(this)
+        );
+        if (liquidityTokens == 0) return 0;
+
+        IUniswapV2Pair pair = IUniswapV2Pair(address(s_uniswapLiquidityToken));
+        (uint112 reserve0, uint112 reserve1, ) = pair.getReserves();
+        uint256 totalSupply = pair.totalSupply();
+
+        // 计算LP代币对应的两种资产数量
+        uint256 amount0 = (uint256(reserve0) * liquidityTokens) / totalSupply;
+        uint256 amount1 = (uint256(reserve1) * liquidityTokens) / totalSupply;
+
+        // 返回正确的底层资产价值
+        if (asset() == pair.token0()) {
+            return amount0 + (amount1 * reserve0) / reserve1; // 将amount1(WETH)转换为底层资产
+        } else if (asset() == pair.token1()) {
+            return amount1 + (amount0 * reserve1) / reserve0; // 将amount0(USDC)转换为底层资产
+        } else {
+            revert("Invalid asset pair");
+        }
     }
 }

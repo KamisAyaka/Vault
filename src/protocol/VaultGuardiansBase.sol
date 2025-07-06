@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.20;
+pragma solidity ^0.8.25;
 
 import {VaultShares} from "./VaultShares.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -10,28 +10,27 @@ import {VaultGuardianToken} from "../dao/VaultGuardianToken.sol";
 
 /**
  * @title VaultGuardiansBase
- * @author Vault Guardian
  * @notice 基础合约，包含用户或操作管理者与协议交互的所有核心功能
  */
 contract VaultGuardiansBase is AStaticLinkData, IVaultData {
     using SafeERC20 for IERC20;
 
-    // 错误定义
-    error VaultGuardiansBase__NotEnoughWeth(
-        uint256 amount,
-        uint256 amountNeeded
-    );
-    error VaultGuardiansBase__NotAnOperatorGuardian(
+    /*//////////////////////////////////////////////////////////////
+                            错误定义
+    //////////////////////////////////////////////////////////////*/
+    error VaultGuardiansBase__InvalidOperatorGuardian(
         address guardianAddress,
         IERC20 token
     );
-    error VaultGuardiansBase__CantQuitOperatorGuardianWithNonWethVaults(
-        address guardianAddress
-    );
-    error VaultGuardiansBase__CantQuitWethWithThisFunction();
+    error VaultGuardiansBase__InvalidVault(address vaultAddress);
+    error VaultGuardiansBase__NonWethVaultsExist(address guardianAddress);
+    error VaultGuardiansBase__WethVaultOnlyFunction();
     error VaultGuardiansBase__TransferFailed();
-    error VaultGuardiansBase__FeeTooSmall(uint256 fee, uint256 requiredFee);
-    error VaultGuardiansBase__NotApprovedToken(address token);
+    error VaultGuardiansBase__UnsupportedToken(address token);
+    error VaultGuardiansBase__SlippageToleranceTooHigh(
+        uint256 tolerance,
+        uint256 maxTolerance
+    );
 
     /*//////////////////////////////////////////////////////////////
                             状态变量
@@ -39,8 +38,6 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
     address private immutable i_aavePool;
     address private immutable i_uniswapV2Router;
     VaultGuardianToken private immutable i_vgToken;
-
-    uint256 private constant GUARDIAN_FEE = 0.1 ether;
 
     // DAO 可更新的值
     uint256 internal s_guardianStakePrice = 10 ether;
@@ -58,16 +55,6 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
     //////////////////////////////////////////////////////////////*/
     event GuardianAdded(address guardianAddress, IERC20 token);
     event GaurdianRemoved(address guardianAddress, IERC20 token);
-    event InvestedInGuardian(
-        address guardianAddress,
-        IERC20 token,
-        uint256 amount
-    );
-    event DinvestedFromGuardian(
-        address guardianAddress,
-        IERC20 token,
-        uint256 amount
-    );
     event GuardianUpdatedHoldingAllocation(
         address guardianAddress,
         IERC20 token
@@ -77,10 +64,6 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
         IERC20 token,
         uint256 tolerance
     );
-    event CounterPartyTokenUpdated(
-        IERC20 oldCounterPartyToken,
-        IERC20 newCounterPartyToken
-    );
 
     /*//////////////////////////////////////////////////////////////
                                修饰符
@@ -88,7 +71,10 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
     /// @dev 仅当调用者是特定代币的操作管理者时通过
     modifier onlyGuardian(IERC20 token) {
         if (address(s_guardians[msg.sender][token]) == address(0)) {
-            revert VaultGuardiansBase__NotAnOperatorGuardian(msg.sender, token);
+            revert VaultGuardiansBase__InvalidOperatorGuardian(
+                msg.sender,
+                token
+            );
         }
         _;
     }
@@ -97,7 +83,9 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
      * @dev 仅允许有效金库调用
      */
     modifier onlyETHVaultShares() {
-        require(s_validVaults[msg.sender], "Caller not a valid vault");
+        if (!s_validVaults[msg.sender]) {
+            revert VaultGuardiansBase__InvalidVault(msg.sender);
+        }
         _;
     }
 
@@ -122,22 +110,29 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
     }
 
     /*//////////////////////////////////////////////////////////////
-                           外部函数
+                               外部函数
     //////////////////////////////////////////////////////////////*/
     /**
      * @notice 成为守护者的入口函数
-     * @notice 需支付等值ETH手续费和WETH质押金
+     * @notice 需支付一定金额的WETH质押金，这笔质押金会被投入到创建的金库中作为投资资金
      * @param wethAllocationData WETH金库的分配配置
+     * @param counterPartyToken Uniswap 交易对代币，默认weth与该代币进行添加流动性质押
      */
     function becomeGuardian(
         AllocationData memory wethAllocationData,
         IERC20 counterPartyToken
     ) external returns (address) {
+        // 防止重复创建WETH金库
+        if (address(s_guardians[msg.sender][i_weth]) != address(0)) {
+            revert VaultGuardiansBase__InvalidOperatorGuardian(
+                msg.sender,
+                i_weth
+            );
+        }
         VaultShares wethVault = new VaultShares(
             IVaultShares.ConstructorData({
                 asset: i_weth,
                 counterPartyToken: counterPartyToken,
-                weth: i_weth,
                 vaultName: string.concat(
                     "Vault Guardian ",
                     IERC20Metadata(address(i_weth)).name()
@@ -154,6 +149,7 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
                 governanceGuardian: address(this)
             })
         );
+        // 只有WETH金库有效
         s_validVaults[address(wethVault)] = true;
         return _becomeTokenGuardian(i_weth, wethVault);
     }
@@ -163,19 +159,26 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
      * @notice 只有WETH操作管理者才能成为其他代币的操作管理者
      * @param allocationData 金库资产分配策略
      * @param token 需要管理的目标代币
+     * @param counterPartyToken Uniswap 交易对代币，token与该代币进行添加流动性质押
      */
     function becomeTokenGuardian(
         AllocationData memory allocationData,
         IERC20 token,
         IERC20 counterPartyToken
     ) external onlyGuardian(i_weth) returns (address) {
-        // slither-disable-next-line uninitialized-local
+        // 防止重复创建相同资产的金库
+        if (address(s_guardians[msg.sender][token]) != address(0)) {
+            revert VaultGuardiansBase__InvalidOperatorGuardian(
+                msg.sender,
+                token
+            );
+        }
         if (
-            !s_isApprovedToken[address(token)] &&
-            !s_isApprovedToken[address(counterPartyToken)] &&
-            token != i_weth
+            !s_isApprovedToken[address(token)] ||
+            !s_isApprovedToken[address(counterPartyToken)] ||
+            token == i_weth
         ) {
-            revert VaultGuardiansBase__NotApprovedToken(address(token));
+            revert VaultGuardiansBase__UnsupportedToken(address(token));
         }
 
         VaultShares tokenVault;
@@ -184,7 +187,6 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
             IVaultShares.ConstructorData({
                 asset: token,
                 counterPartyToken: counterPartyToken,
-                weth: i_weth,
                 vaultName: string.concat(
                     "Vault Guardian ",
                     IERC20Metadata(address(token)).name()
@@ -213,7 +215,7 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
      */
     function quitGuardian() external onlyGuardian(i_weth) returns (uint256) {
         if (_guardianHasNonWethVaults(msg.sender)) {
-            revert VaultGuardiansBase__CantQuitWethWithThisFunction();
+            revert VaultGuardiansBase__NonWethVaultsExist(msg.sender);
         }
         return _quitGuardian(i_weth);
     }
@@ -226,7 +228,7 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
         IERC20 token
     ) external onlyGuardian(token) returns (uint256) {
         if (token == i_weth) {
-            revert VaultGuardiansBase__CantQuitWethWithThisFunction();
+            revert VaultGuardiansBase__WethVaultOnlyFunction();
         }
         return _quitGuardian(token);
     }
@@ -240,12 +242,23 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
         IERC20 token,
         AllocationData memory tokenAllocationData
     ) external onlyGuardian(token) {
+        if (_guardianHasNonWethVaults(msg.sender)) {
+            revert VaultGuardiansBase__NonWethVaultsExist(msg.sender);
+        }
         emit GuardianUpdatedHoldingAllocation(msg.sender, token);
         s_guardians[msg.sender][token].updateHoldingAllocation(
             tokenAllocationData
         );
     }
 
+    /**
+     * @notice 更新指定代币的Uniswap滑点容忍度
+     * @param token 需要更新滑点设置的金库资产
+     * @param tolerance 新的滑点容忍值（以万分之一为单位）
+     * @dev 示例：200 = 2%滑点容忍度
+     * @dev 仅当前token的守护者可调用
+     * @dev 触发GuardianUpdatedUniswapSlippage事件记录变更
+     */
     function updateUniswapSlippage(
         IERC20 token,
         uint256 tolerance
@@ -266,10 +279,10 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
     ) external onlyGuardian(token) {
         // 验证新交易对代币是否已批准
         if (
-            s_isApprovedToken[address(newCounterPartyToken)] &&
-            newCounterPartyToken != token
+            !s_isApprovedToken[address(newCounterPartyToken)] ||
+            newCounterPartyToken == token
         ) {
-            revert VaultGuardiansBase__NotApprovedToken(
+            revert VaultGuardiansBase__UnsupportedToken(
                 address(newCounterPartyToken)
             );
         }
@@ -293,12 +306,13 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
     //////////////////////////////////////////////////////////////*/
     /**
      * @notice 成为代币操作管理者的内部实现
-     * @notice 铸造治理代币作为质押奖励
+     * @notice 在调用deposit方法的时候金库会判断管理的资产是否为weth代币
+     * @notice 如果是的话就会给存入WETH的账户铸造治理代币作为质押奖励
      * @param token 被管理的代币
      * @param tokenVault 对应的金库合约
      * @dev 铸造逻辑说明:
      * - 仅当token为WETH时铸造VGT
-     * - 铸造数量等于质押的token数量
+     * - 铸造数量等于质押的token数量，但有少部分会分给金库管理者和DAO作为奖励
      * - 确保DAO可通过s_guardianStakePrice参数调整最低质押要求
      */
     function _becomeTokenGuardian(
@@ -308,12 +322,6 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
         s_guardians[msg.sender][token] = IVaultShares(address(tokenVault));
         s_guardianVaultCount[msg.sender]++;
         emit GuardianAdded(msg.sender, token);
-
-        // 仅对WETH质押铸造VGT
-        if (address(token) == address(i_weth)) {
-            // 铸造数量等于质押金额
-            i_vgToken.mint(msg.sender, s_guardianStakePrice);
-        }
 
         // 执行质押转账
         token.safeTransferFrom(msg.sender, address(this), s_guardianStakePrice);
@@ -329,17 +337,23 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
         return address(tokenVault);
     }
 
+    /**
+     * @notice 守护者退出金库管理的内部实现
+     * @param token 需要退出管理的金库资产类型
+     * @return numberOfAssetsReturned 返回赎回的资产数量
+     * @dev 执行流程：
+     * 1. 获取守护者的金库实例
+     * 2. 清除守护者对该金库的管理权限
+     * 3. 触发GaurdianRemoved事件
+     * 4. 将金库设为非活跃状态
+     * 5. 赎回守护者持有的全部份额
+     * 6. 清理金库有效性标记和减少守护者金库计数
+     * @dev 金库停用后用户仍可提取资产，但禁止新投资
+     */
     function _quitGuardian(IERC20 token) private returns (uint256) {
         IVaultShares tokenVault = IVaultShares(s_guardians[msg.sender][token]);
         s_guardians[msg.sender][token] = IVaultShares(address(0)); //将管理员的权限置为0,管理员无法再管理该金库
         address vaultAddress = address(tokenVault);
-        // 移除金库有效性标记
-        if (s_validVaults[vaultAddress]) {
-            delete s_validVaults[vaultAddress];
-        }
-        if (s_guardianVaultCount[msg.sender] > 0) {
-            s_guardianVaultCount[msg.sender]--;
-        }
         emit GaurdianRemoved(msg.sender, token);
         tokenVault.setNotActive();
         uint256 maxRedeemable = tokenVault.maxRedeem(msg.sender);
@@ -349,28 +363,42 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
             msg.sender
         );
 
-        // 仅销毁WETH相关的治理代币
-        if (address(token) == address(i_weth)) {
-            // 销毁数量等于质押金额
-            i_vgToken.burn(msg.sender, s_guardianStakePrice);
+        // 移除金库有效性标记
+        if (s_validVaults[vaultAddress]) {
+            delete s_validVaults[vaultAddress];
+        }
+        if (s_guardianVaultCount[msg.sender] > 0) {
+            s_guardianVaultCount[msg.sender]--;
         }
 
         return numberOfAssetsReturned;
     }
 
+    /// @notice 添加批准代币的内部实现
+    /// @param token 要新增的代币地址
+    function _addApprovedToken(IERC20 token) internal {
+        if (address(token) == address(0)) {
+            revert VaultGuardiansBase__UnsupportedToken(address(0));
+        }
+        if (s_isApprovedToken[address(token)]) {
+            revert VaultGuardiansBase__UnsupportedToken(address(token));
+        }
+        s_isApprovedToken[address(token)] = true;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                   视图和纯函数
+    //////////////////////////////////////////////////////////////*/
     /**
      * @notice 检查守护者是否持有非WETH金库
      * @param guardian 需要验证的守护者地址
      */
     function _guardianHasNonWethVaults(
         address guardian
-    ) private view returns (bool) {
+    ) public view returns (bool) {
         return s_guardianVaultCount[guardian] > 1;
     }
 
-    /*//////////////////////////////////////////////////////////////
-                   视图和纯函数
-    //////////////////////////////////////////////////////////////*/
     /**
      * @notice 获取守护者对应的金库合约
      * @param guardian 守护者地址
@@ -421,5 +449,9 @@ contract VaultGuardiansBase is AStaticLinkData, IVaultData {
 
     function getVgTokenAddress() external view returns (address) {
         return address(i_vgToken);
+    }
+
+    function getWethAddress() external view returns (IERC20) {
+        return i_weth;
     }
 }

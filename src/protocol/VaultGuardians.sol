@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.20;
+pragma solidity ^0.8.25;
 
 import {VaultGuardiansBase, IERC20, SafeERC20} from "./VaultGuardiansBase.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
  * @title VaultGuardians
- * @author Vault Guardian
  * @notice 本合约是 Vault Guardian 系统的入口合约
- * @notice 包含 DAO 拥有的所有控制功能
+ * @notice 包含 DAO 拥有的所有控制功能，所有者是DAO
  * @notice VaultGuardiansBase 包含用户和操作管理者的所有功能
  */
 contract VaultGuardians is Ownable, VaultGuardiansBase {
@@ -16,6 +15,9 @@ contract VaultGuardians is Ownable, VaultGuardiansBase {
 
     /// @notice 转账失败错误
     error VaultGuardians__TransferFailed();
+
+    /// @notice 批准代币事件
+    event ApprovedTokenAdded(address indexed token);
 
     /*//////////////////////////////////////////////////////////////
                                  事件
@@ -79,6 +81,13 @@ contract VaultGuardians is Ownable, VaultGuardiansBase {
     function updateGuardianAndDaoCut(uint256 newCut) external onlyOwner {
         s_guardianAndDaoCut = newCut;
         emit VaultGuardians__UpdatedStakePrice(s_guardianAndDaoCut, newCut);
+    }
+
+    /// @notice DAO添加新的批准代币
+    /// @param token 要新增的代币地址
+    function addApprovedToken(IERC20 token) external onlyOwner {
+        _addApprovedToken(token);
+        emit ApprovedTokenAdded(address(token));
     }
 
     /// @notice DAO 可以提取金库中的多余 ERC20 代币

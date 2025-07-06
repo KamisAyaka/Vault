@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.25;
 
 import {IUniswapV2Pair} from "../../vendor/IUniswapV2Pair.sol";
 import {IUniswapV2Router01} from "../../vendor/IUniswapV2Router01.sol";
@@ -33,9 +33,6 @@ contract UniswapAdapter {
         );
     }
 
-    // slither-disable-start reentrancy-eth
-    // slither-disable-start reentrancy-benign
-    // slither-disable-start reentrancy-events
     /**
      * @notice 金库仅持有一种资产代币。但我们需要提供流动性到Uniswap的交易对
      * @notice 所以如果资产是USDC或WETH，我们用一半的资产兑换WETH
@@ -60,8 +57,8 @@ contract UniswapAdapter {
         uint256 actualTokenB = _swap(
             path,
             amountOfTokenToSwap,
-            (i_uniswapRouter.getAmountsOut(amountOfTokenToSwap, path)[1] * 
-            (10000 - s_slippageTolerance)) / 10000
+            (i_uniswapRouter.getAmountsOut(amountOfTokenToSwap, path)[1] *
+                (10000 - s_slippageTolerance)) / 10000
         );
 
         // 计算剩余tokenA数量
@@ -77,15 +74,17 @@ contract UniswapAdapter {
             uint256 counterPartyTokenAmount,
             uint256 liquidity
         ) = i_uniswapRouter.addLiquidity({
-            tokenA: address(token),
-            tokenB: address(counterPartyToken),
-            amountADesired: remainingTokenA,
-            amountBDesired: actualTokenB,
-            amountAMin: (remainingTokenA * (10000 - s_slippageTolerance)) / 10000,
-            amountBMin: (actualTokenB * (10000 - s_slippageTolerance)) / 10000,
-            to: address(this),
-            deadline: block.timestamp + 300
-        });
+                tokenA: address(token),
+                tokenB: address(counterPartyToken),
+                amountADesired: remainingTokenA,
+                amountBDesired: actualTokenB,
+                amountAMin: (remainingTokenA * (10000 - s_slippageTolerance)) /
+                    10000,
+                amountBMin: (actualTokenB * (10000 - s_slippageTolerance)) /
+                    10000,
+                to: address(this),
+                deadline: block.timestamp + 300
+            });
 
         emit UniswapInvested(tokenAmount, counterPartyTokenAmount, liquidity);
     }
@@ -132,7 +131,7 @@ contract UniswapAdapter {
                 deadline: block.timestamp + 300
             });
 
-        // 将配对代币兑换回底层资产（无论哪种方向都需要处理）
+        // 将配对代币兑换回底层资产
         if (counterPartyAmount > 0) {
             // 创建正确的交易路径（始终从counterPartyToken兑换到token）
             address[] memory path = new address[](2);
@@ -179,7 +178,15 @@ contract UniswapAdapter {
         return amounts[1];
     }
 
-    // 分离最小金额计算逻辑
+    /// @dev 计算移除流动性时的最小代币数量（考虑滑点容忍度）
+    /// @param token 用户持有的代币地址
+    /// @param pair Uniswap V2池合约
+    /// @param reserve0 池中代币0的储备量
+    /// @param reserve1 池中代币1的储备量
+    /// @param totalSupply LP代币总供应量
+    /// @param liquidityAmount 要移除的流动性数量
+    /// @return amount0 应获得的代币0最小数量
+    /// @return amount1 应获得的代币1最小数量
     function _calculateMinAmounts(
         IERC20 token,
         IUniswapV2Pair pair,
@@ -189,7 +196,10 @@ contract UniswapAdapter {
         uint256 liquidityAmount
     ) private view returns (uint256, uint256) {
         uint256 slippage = s_slippageTolerance;
+        // 根据代币在交易对中的位置计算兑换比例
         if (address(token) == pair.token0()) {
+            // token0对应reserve0，token1对应reserve1
+            // 计算扣除滑点后的最小兑换数量
             return (
                 (((uint256(reserve0) * liquidityAmount) / totalSupply) *
                     (10000 - slippage)) / 10000,
@@ -197,6 +207,7 @@ contract UniswapAdapter {
                     (10000 - slippage)) / 10000
             );
         }
+        // token位置相反时交换计算顺序
         return (
             (((uint256(reserve1) * liquidityAmount) / totalSupply) *
                 (10000 - slippage)) / 10000,

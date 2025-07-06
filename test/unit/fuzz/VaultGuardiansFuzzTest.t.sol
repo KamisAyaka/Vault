@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.20;
+pragma solidity ^0.8.25;
 
 import {Base_Test} from "../../Base.t.sol";
 import {VaultShares} from "../../../src/protocol/VaultShares.sol";

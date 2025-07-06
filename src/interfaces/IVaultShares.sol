@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.20;
+pragma solidity ^0.8.25;
 
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {IVaultData} from "./IVaultData.sol";
@@ -9,7 +9,6 @@ interface IVaultShares is IERC4626, IVaultData {
     struct ConstructorData {
         IERC20 asset;
         IERC20 counterPartyToken;
-        IERC20 weth;
         string vaultName;
         string vaultSymbol;
         address operatorGuardian;

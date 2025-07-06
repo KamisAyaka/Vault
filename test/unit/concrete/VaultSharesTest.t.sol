@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.20;
+pragma solidity ^0.8.25;
 
 import {Base_Test} from "../../Base.t.sol";
 import {console} from "forge-std/console.sol";
@@ -20,7 +20,7 @@ contract VaultSharesTest is Base_Test {
             250 // aave
         );
     VaultShares public wethVaultShares;
-    uint256 public defaultGuardianAndDaoCut = 1000;
+    uint256 public defaultGuardianAndDaoCut;
 
     AllocationData newAllocationData =
         AllocationData(
@@ -37,19 +37,19 @@ contract VaultSharesTest is Base_Test {
         weth.mint(mintAmount, guardian);
         vm.startPrank(guardian);
         weth.approve(address(vaultGuardians), mintAmount);
-        address wethVault = vaultGuardians.becomeGuardian(allocationData);
+        address wethVault = vaultGuardians.becomeGuardian(allocationData, usdc);
         wethVaultShares = VaultShares(wethVault);
+        defaultGuardianAndDaoCut = wethVaultShares.getGuardianAndDaoCut();
         vm.stopPrank();
         _;
     }
 
     function testSetupVaultShares() public hasGuardian {
-        assertEq(wethVaultShares.getGuardian(), guardian);
+        assertEq(wethVaultShares.getOperatorGuardian(), guardian);
         assertEq(
-            wethVaultShares.getGuardianAndDaoCut(),
-            defaultGuardianAndDaoCut
+            wethVaultShares.getGovernanceGuardian(),
+            address(vaultGuardians)
         );
-        assertEq(wethVaultShares.getVaultGuardians(), address(vaultGuardians));
         assertEq(wethVaultShares.getIsActive(), true);
         assertEq(wethVaultShares.getAaveAToken(), address(awethTokenMock));
         assertEq(
@@ -59,7 +59,7 @@ contract VaultSharesTest is Base_Test {
     }
 
     function testSetNotActive() public hasGuardian {
-        vm.prank(wethVaultShares.getVaultGuardians());
+        vm.prank(wethVaultShares.getGovernanceGuardian());
         wethVaultShares.setNotActive();
         assertEq(wethVaultShares.getIsActive(), false);
     }
@@ -68,24 +68,26 @@ contract VaultSharesTest is Base_Test {
         vm.prank(user);
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultShares.VaultShares__NotVaultGuardianContract.selector
+                VaultShares.VaultShares__InvalidGovernanceGuardian.selector
             )
         );
         wethVaultShares.setNotActive();
     }
 
     function testOnlyCanSetNotActiveIfActive() public hasGuardian {
-        vm.startPrank(wethVaultShares.getVaultGuardians());
+        vm.startPrank(wethVaultShares.getGovernanceGuardian());
         wethVaultShares.setNotActive();
         vm.expectRevert(
-            abi.encodeWithSelector(VaultShares.VaultShares__NotActive.selector)
+            abi.encodeWithSelector(
+                VaultShares.VaultShares__VaultNotActive.selector
+            )
         );
         wethVaultShares.setNotActive();
         vm.stopPrank();
     }
 
     function testUpdateHoldingAllocation() public hasGuardian {
-        vm.startPrank(wethVaultShares.getVaultGuardians());
+        vm.startPrank(wethVaultShares.getGovernanceGuardian());
         wethVaultShares.updateHoldingAllocation(newAllocationData);
         assertEq(
             wethVaultShares.getAllocationData().holdAllocation,
@@ -108,17 +110,19 @@ contract VaultSharesTest is Base_Test {
         vm.prank(user);
         vm.expectRevert(
             abi.encodeWithSelector(
-                VaultShares.VaultShares__NotVaultGuardianContract.selector
+                VaultShares.VaultShares__InvalidGovernanceGuardian.selector
             )
         );
         wethVaultShares.updateHoldingAllocation(newAllocationData);
     }
 
     function testOnlyupdateAllocationDataWhenActive() public hasGuardian {
-        vm.startPrank(wethVaultShares.getVaultGuardians());
+        vm.startPrank(wethVaultShares.getGovernanceGuardian());
         wethVaultShares.setNotActive();
         vm.expectRevert(
-            abi.encodeWithSelector(VaultShares.VaultShares__NotActive.selector)
+            abi.encodeWithSelector(
+                VaultShares.VaultShares__VaultNotActive.selector
+            )
         );
         wethVaultShares.updateHoldingAllocation(newAllocationData);
         vm.stopPrank();
@@ -133,7 +137,7 @@ contract VaultSharesTest is Base_Test {
             badAllocationData.aaveAllocation +
             badAllocationData.uniswapAllocation;
 
-        vm.startPrank(wethVaultShares.getVaultGuardians());
+        vm.startPrank(wethVaultShares.getGovernanceGuardian());
         vm.expectRevert(
             abi.encodeWithSelector(
                 VaultShares.VaultShares__AllocationNot100Percent.selector,
@@ -175,6 +179,77 @@ contract VaultSharesTest is Base_Test {
         );
     }
 
+    function testUserDepositsFundsAndVGTIsMinted() public hasGuardian {
+        weth.mint(mintAmount, user);
+        vm.startPrank(user);
+        weth.approve(address(wethVaultShares), mintAmount);
+        wethVaultShares.deposit(mintAmount, user);
+
+        uint256 vgtCut = (mintAmount * defaultGuardianAndDaoCut) / 10000;
+        uint256 expectedVGT = mintAmount - 2 * vgtCut;
+
+        assertEq(
+            IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(user),
+            expectedVGT
+        );
+    }
+
+    function testUserRedeemsFundsAndVGTIsBurned()
+        public
+        hasGuardian
+        userIsInvested
+    {
+        uint256 initialVGTBalance = IERC20(vaultGuardians.getVgTokenAddress())
+            .balanceOf(user);
+        uint256 AssetsToRedeem = initialVGTBalance / 2; // 使用VGT余额作为赎回基准
+
+        vm.prank(user);
+        wethVaultShares.withdraw(AssetsToRedeem, user, user);
+
+        uint256 expectedVGT = initialVGTBalance - AssetsToRedeem;
+
+        assertEq(
+            IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(user),
+            expectedVGT
+        );
+    }
+
+    function testVGTMintingAmount() public hasGuardian {
+        uint256 vaultGuardiansVGTbefore = IERC20(
+            vaultGuardians.getVgTokenAddress()
+        ).balanceOf(address(vaultGuardians));
+
+        uint256 OperatorGuardianVGTbefore = IERC20(
+            vaultGuardians.getVgTokenAddress()
+        ).balanceOf(wethVaultShares.getOperatorGuardian());
+
+        weth.mint(mintAmount, user);
+        vm.startPrank(user);
+        weth.approve(address(wethVaultShares), mintAmount);
+        wethVaultShares.deposit(mintAmount, user);
+
+        uint256 vgtCut = (mintAmount * defaultGuardianAndDaoCut) / 10000;
+        uint256 expectedVGT = mintAmount - 2 * vgtCut;
+
+        assertEq(
+            IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(user),
+            expectedVGT
+        );
+        // 验证守护者和DAO的VGT铸造
+        assertEq(
+            IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(
+                address(vaultGuardians)
+            ),
+            vgtCut + vaultGuardiansVGTbefore
+        );
+        assertEq(
+            IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(
+                wethVaultShares.getOperatorGuardian()
+            ),
+            vgtCut + OperatorGuardianVGTbefore
+        );
+    }
+
     modifier userIsInvested() {
         weth.mint(mintAmount, user);
         vm.startPrank(user);
@@ -184,33 +259,33 @@ contract VaultSharesTest is Base_Test {
         _;
     }
 
-    // function testRebalanceResultsInTheSameOutcome()
-    //     public
-    //     hasGuardian
-    //     userIsInvested
-    // {
-    //     uint256 startingUniswapLiquidityTokensBalance = IERC20(
-    //         wethVaultShares.getUniswapLiquidtyToken()
-    //     ).balanceOf(address(wethVaultShares));
-    //     uint256 startingAaveAtokensBalance = IERC20(
-    //         wethVaultShares.getAaveAToken()
-    //     ).balanceOf(address(wethVaultShares));
+    function testRebalanceResultsInTheSameOutcome()
+        public
+        hasGuardian
+        userIsInvested
+    {
+        uint256 startingUniswapLiquidityTokensBalance = IERC20(
+            wethVaultShares.getUniswapLiquidtyToken()
+        ).balanceOf(address(wethVaultShares));
+        uint256 startingAaveAtokensBalance = IERC20(
+            wethVaultShares.getAaveAToken()
+        ).balanceOf(address(wethVaultShares));
 
-    //     wethVaultShares.rebalanceFunds();
+        wethVaultShares.rebalanceFunds();
 
-    //     assertEq(
-    //         IERC20(wethVaultShares.getUniswapLiquidtyToken()).balanceOf(
-    //             address(wethVaultShares)
-    //         ),
-    //         startingUniswapLiquidityTokensBalance
-    //     );
-    //     assertEq(
-    //         IERC20(wethVaultShares.getAaveAToken()).balanceOf(
-    //             address(wethVaultShares)
-    //         ),
-    //         startingAaveAtokensBalance
-    //     );
-    // }
+        assertEq(
+            IERC20(wethVaultShares.getUniswapLiquidtyToken()).balanceOf(
+                address(wethVaultShares)
+            ),
+            startingUniswapLiquidityTokensBalance
+        );
+        assertEq(
+            IERC20(wethVaultShares.getAaveAToken()).balanceOf(
+                address(wethVaultShares)
+            ),
+            startingAaveAtokensBalance
+        );
+    }
 
     function testWithdraw() public hasGuardian userIsInvested {
         uint256 startingBalance = weth.balanceOf(user);
@@ -236,6 +311,46 @@ contract VaultSharesTest is Base_Test {
         assertEq(
             wethVaultShares.balanceOf(user),
             startingSharesBalance - amoutToRedeem
+        );
+    }
+
+    function testPartialWithdrawalUpdatesBalancesCorrectly()
+        public
+        hasGuardian
+        userIsInvested
+    {
+        uint256 initialShareBalance = wethVaultShares.balanceOf(user);
+        uint256 initialAssetBalance = weth.balanceOf(user);
+        uint256 withdrawalShareAmount = initialShareBalance / 2;
+
+        vm.prank(user);
+        wethVaultShares.redeem(withdrawalShareAmount, user, user);
+
+        // 验证余额更新正确
+        assertEq(
+            wethVaultShares.balanceOf(user),
+            initialShareBalance - withdrawalShareAmount
+        );
+        assertGt(weth.balanceOf(user), initialAssetBalance);
+    }
+
+    function testFullWithdrawalCleansUpState()
+        public
+        hasGuardian
+        userIsInvested
+    {
+        uint256 initialShareBalance = wethVaultShares.balanceOf(user);
+        uint256 preTotalSupply = wethVaultShares.totalSupply();
+
+        vm.prank(user);
+        wethVaultShares.redeem(initialShareBalance, user, user);
+
+        // 验证余额归零
+        assertEq(wethVaultShares.balanceOf(user), 0);
+        // 验证总供应量减少
+        assertEq(
+            wethVaultShares.totalSupply(),
+            preTotalSupply - initialShareBalance
         );
     }
 }
