@@ -185,12 +185,10 @@ contract VaultSharesTest is Base_Test {
         weth.approve(address(wethVaultShares), mintAmount);
         wethVaultShares.deposit(mintAmount, user);
 
-        // 修改为验证份额与VGT的一致性
-        uint256 userShares = wethVaultShares.balanceOf(user);
         uint256 vgtBalance = IERC20(vaultGuardians.getVgTokenAddress())
             .balanceOf(user);
 
-        assertEq(vgtBalance, userShares);
+        assertEq(mintAmount, vgtBalance);
     }
 
     function testUserRedeemsFundsAndVGTIsBurned()
@@ -201,52 +199,15 @@ contract VaultSharesTest is Base_Test {
         uint256 initialShares = wethVaultShares.balanceOf(user);
         uint256 initialVGT = IERC20(vaultGuardians.getVgTokenAddress())
             .balanceOf(user);
-        uint256 sharesToRedeem = initialShares / 2; // 使用份额作为赎回基准
+        uint256 sharesToRedeem = initialShares / 3; // 使用份额作为赎回基准
 
         vm.prank(user);
         wethVaultShares.redeem(sharesToRedeem, user, user);
 
-        uint256 expectedVGT = initialVGT - sharesToRedeem;
+        uint256 BurnVGT = (initialVGT * sharesToRedeem) / initialShares;
         assertEq(
             IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(user),
-            expectedVGT
-        );
-    }
-
-    function testVGTMintingAmount() public hasGuardian {
-        uint256 vaultGuardiansVGTbefore = IERC20(
-            vaultGuardians.getVgTokenAddress()
-        ).balanceOf(address(vaultGuardians));
-
-        uint256 OperatorGuardianVGTbefore = IERC20(
-            vaultGuardians.getVgTokenAddress()
-        ).balanceOf(wethVaultShares.getOperatorGuardian());
-
-        weth.mint(mintAmount, user);
-        vm.startPrank(user);
-        weth.approve(address(wethVaultShares), mintAmount);
-        uint256 totalshares = wethVaultShares.deposit(mintAmount, user);
-
-        uint256 userShares = wethVaultShares.balanceOf(user);
-        uint256 governanceShares = (totalshares - userShares) / 2;
-
-        // 验证用户VGT等于自身份额
-        assertEq(
-            IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(user),
-            userShares
-        );
-        // 验证守护者和DAO的VGT铸造
-        assertEq(
-            IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(
-                address(vaultGuardians)
-            ),
-            vaultGuardiansVGTbefore + governanceShares
-        );
-        assertEq(
-            IERC20(vaultGuardians.getVgTokenAddress()).balanceOf(
-                wethVaultShares.getOperatorGuardian()
-            ),
-            OperatorGuardianVGTbefore + governanceShares
+            initialVGT - BurnVGT
         );
     }
 

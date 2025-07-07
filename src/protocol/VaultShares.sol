@@ -50,6 +50,7 @@ contract VaultShares is
     bool private s_isActive;
 
     AllocationData private s_allocationData;
+    mapping(address userAddress => uint256 userVGTMintAmount) s_VGTMintAmount;
 
     uint256 private constant ALLOCATION_PRECISION = 1_000;
 
@@ -259,16 +260,9 @@ contract VaultShares is
 
         // 铸造VGT治理代币（仅限WETH存款）
         if (address(i_weth) == address(asset())) {
-            // 使用份额而非资产计算VGT铸造量
-            VaultGuardians(i_governanceGuardian).mintVGT(receiver, userShares);
-            VaultGuardians(i_governanceGuardian).mintVGT(
-                i_operatorGuardian,
-                governanceShares
-            );
-            VaultGuardians(i_governanceGuardian).mintVGT(
-                i_governanceGuardian,
-                governanceShares
-            );
+            s_VGTMintAmount[receiver] += assets;
+            // 使用资产计算VGT铸造量，确保1个WETH对应一个VGT代币
+            VaultGuardians(i_governanceGuardian).mintVGT(receiver, assets);
         }
 
         // 铸造管理费和DAO份额
@@ -309,16 +303,9 @@ contract VaultShares is
 
         // 铸造VGT治理代币（仅限WETH存款）
         if (address(i_weth) == address(asset())) {
-            // 使用份额而非资产计算VGT铸造量
-            VaultGuardians(i_governanceGuardian).mintVGT(receiver, userShares);
-            VaultGuardians(i_governanceGuardian).mintVGT(
-                i_operatorGuardian,
-                governanceShares
-            );
-            VaultGuardians(i_governanceGuardian).mintVGT(
-                i_governanceGuardian,
-                governanceShares
-            );
+            s_VGTMintAmount[receiver] += assets;
+            // 使用资产计算VGT铸造量，确保1个WETH对应一个VGT代币
+            VaultGuardians(i_governanceGuardian).mintVGT(receiver, assets);
         }
 
         // 铸造管理费和DAO份额
@@ -343,24 +330,25 @@ contract VaultShares is
             revert ERC4626ExceededMaxRedeem(owner, shares, maxShares);
         }
 
+        // 销毁VGT治理代币（仅限WETH金库）
+        if (address(i_weth) == address(asset())) {
+            uint256 userPrincipal = s_VGTMintAmount[receiver];
+            uint256 userTotalShares = balanceOf(receiver);
+
+            // 按份额比例销毁VGT
+            uint256 vgtToBurn = (userPrincipal * shares) / userTotalShares;
+            s_VGTMintAmount[receiver] -= vgtToBurn;
+            VaultGuardians(i_governanceGuardian).burnVGT(receiver, vgtToBurn);
+        }
+
         assets = previewRedeem(shares);
 
         // 按比例清算投资头寸
         _devestFunds(assets);
 
         _withdraw(_msgSender(), receiver, owner, assets, shares);
-
-        // 销毁VGT治理代币（仅限WETH金库）
-        if (address(i_weth) == address(asset())) {
-            // 使用份额而非资产销毁VGT
-            VaultGuardians(i_governanceGuardian).burnVGT(receiver, shares);
-        }
     }
 
-    /**
-     * @notice 用户赎回资产时销毁对应VGT治理代币
-     * @dev 覆盖标准withdraw实现
-     */
     function withdraw(
         uint256 assets,
         address receiver,
@@ -372,15 +360,20 @@ contract VaultShares is
             revert ERC4626ExceededMaxWithdraw(owner, assets, maxAssets);
         }
 
+        // 销毁VGT治理代币（仅限WETH金库）
+        if (address(i_weth) == address(asset())) {
+            uint256 userPrincipal = s_VGTMintAmount[receiver];
+            uint256 userTotalShares = balanceOf(receiver);
+
+            uint256 vgtToBurn = (userPrincipal * shares) / userTotalShares;
+            s_VGTMintAmount[receiver] -= vgtToBurn;
+            VaultGuardians(i_governanceGuardian).burnVGT(receiver, vgtToBurn);
+        }
+
         // 按比例清算投资头寸
         _devestFunds(assets);
 
         _withdraw(_msgSender(), receiver, owner, assets, shares);
-
-        // 销毁VGT治理代币（仅限WETH金库）
-        if (address(i_weth) == address(asset())) {
-            VaultGuardians(i_governanceGuardian).burnVGT(receiver, assets);
-        }
     }
 
     /*//////////////////////////////////////////////////////////////
